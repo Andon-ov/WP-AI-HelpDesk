@@ -27,11 +27,6 @@ define( 'CHATBOT_AI_ENGINE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'CHATBOT_AI_ENGINE_URL', plugin_dir_url( __FILE__ ) );
 define( 'CHATBOT_AI_ENGINE_BASENAME', plugin_basename( __FILE__ ) );
 
-// Encryption salt for API key protection
-if ( ! defined( 'CHATBOT_AI_ENGINE_SALT' ) ) {
-	define( 'CHATBOT_AI_ENGINE_SALT', wp_salt( 'auth' ) );
-}
-
 /**
  * Main plugin class
  */
@@ -104,6 +99,8 @@ class Chatbot_AI_Engine {
 	 * Plugin activation
 	 */
 	public function activate() {
+		log_chatbot_ai_engine( 'Plugin activating...' );
+
 		// Initialize default settings if they don't exist
 		if ( ! get_option( 'chatbot_ai_engine_settings' ) ) {
 			$default_settings = array(
@@ -116,6 +113,7 @@ class Chatbot_AI_Engine {
 				'position'     => 'bottom-right',
 			);
 			update_option( 'chatbot_ai_engine_settings', $default_settings );
+			log_chatbot_ai_engine( 'Default settings initialized' );
 		}
 
 		// Flush rewrite rules
@@ -123,13 +121,14 @@ class Chatbot_AI_Engine {
 
 		// Trigger activation action
 		do_action( 'chatbot_ai_engine_activated' );
+		log_chatbot_ai_engine( 'Plugin activated successfully' );
 	}
 
 	/**
 	 * Plugin deactivation
 	 */
 	public function deactivate() {
-		// Clean up if needed
+		log_chatbot_ai_engine( 'Plugin deactivating...' );
 		flush_rewrite_rules();
 	}
 
@@ -192,6 +191,8 @@ class Chatbot_AI_Engine {
 			return array();
 		}
 
+		log_chatbot_ai_engine( 'Sanitizing settings...', $settings );
+
 		$sanitized = array();
 
 		// Sanitize enabled
@@ -203,6 +204,7 @@ class Chatbot_AI_Engine {
 			// Don't re-encrypt if it's the placeholder (indicates existing key)
 			if ( '••••••••••••••••' !== $api_key ) {
 				$sanitized['api_key'] = $this->encrypt_api_key( $api_key );
+				log_chatbot_ai_engine( 'New API key encrypted and saved' );
 			} else {
 				$existing = get_option( 'chatbot_ai_engine_settings', array() );
 				$sanitized['api_key'] = isset( $existing['api_key'] ) ? $existing['api_key'] : '';
@@ -212,7 +214,7 @@ class Chatbot_AI_Engine {
 		}
 
 		// Sanitize API provider
-		$allowed_providers = array( 'openai', 'groq', 'anthropic', 'custom' );
+		$allowed_providers = array( 'openai', 'groq', 'anthropic', 'gemini', 'custom' );
 		$sanitized['api_provider'] = isset( $settings['api_provider'] ) && in_array( $settings['api_provider'], $allowed_providers, true ) ? $settings['api_provider'] : 'openai';
 
 		// Sanitize API URL
@@ -240,6 +242,8 @@ class Chatbot_AI_Engine {
 
 		// Trigger settings updated action
 		do_action( 'chatbot_ai_engine_settings_updated', $sanitized );
+
+		log_chatbot_ai_engine( 'Settings sanitized successfully' );
 
 		return $sanitized;
 	}
@@ -288,6 +292,7 @@ class Chatbot_AI_Engine {
 								<option value="openai" <?php selected( $settings['api_provider'] ?? '', 'openai' ); ?>><?php esc_html_e( 'OpenAI', 'chatbot-ai-engine' ); ?></option>
 								<option value="groq" <?php selected( $settings['api_provider'] ?? '', 'groq' ); ?>><?php esc_html_e( 'Groq', 'chatbot-ai-engine' ); ?></option>
 								<option value="anthropic" <?php selected( $settings['api_provider'] ?? '', 'anthropic' ); ?>><?php esc_html_e( 'Anthropic', 'chatbot-ai-engine' ); ?></option>
+								<option value="gemini" <?php selected( $settings['api_provider'] ?? '', 'gemini' ); ?>><?php esc_html_e( 'Google Gemini', 'chatbot-ai-engine' ); ?></option>
 								<option value="custom" <?php selected( $settings['api_provider'] ?? '', 'custom' ); ?>><?php esc_html_e( 'Custom API', 'chatbot-ai-engine' ); ?></option>
 							</select>
 							<p class="description"><?php esc_html_e( 'Select your AI provider', 'chatbot-ai-engine' ); ?></p>
@@ -320,7 +325,11 @@ class Chatbot_AI_Engine {
 						</th>
 						<td>
 							<input type="text" id="chatbot_model" name="chatbot_ai_engine_settings[model]" value="<?php echo esc_attr( $settings['model'] ?? 'gpt-3.5-turbo' ); ?>" class="regular-text" placeholder="e.g., gpt-3.5-turbo" />
-							<p class="description"><?php esc_html_e( 'The model ID from your AI provider', 'chatbot-ai-engine' ); ?></p>
+							<p class="description">
+								<?php esc_html_e( 'The model ID from your AI provider.', 'chatbot-ai-engine' ); ?><br>
+								<strong>Groq:</strong> <code>llama-3.1-8b-instant</code> (Fast), <code>llama-3.3-70b-versatile</code> (Smart)<br>
+								<strong>Gemini:</strong> <code>gemini-1.5-flash</code> (Fast), <code>gemini-1.5-pro</code> (Smart)
+							</p>
 						</td>
 					</tr>
 
@@ -377,13 +386,28 @@ class Chatbot_AI_Engine {
 		<script>
 			function updateApiUrl(provider) {
 				const apiUrlField = document.getElementById('chatbot_api_url');
+				const modelField = document.getElementById('chatbot_model');
+				
 				const urls = {
 					'openai': 'https://api.openai.com/v1/chat/completions',
 					'groq': 'https://api.groq.com/openai/v1/chat/completions',
 					'anthropic': 'https://api.anthropic.com/v1/messages',
+					'gemini': 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
 					'custom': ''
 				};
+
+				const models = {
+					'openai': 'gpt-3.5-turbo',
+					'groq': 'llama-3.1-8b-instant',
+					'anthropic': 'claude-3-5-sonnet-20240620',
+					'gemini': 'gemini-1.5-flash',
+					'custom': ''
+				};
+
 				apiUrlField.value = urls[provider] || '';
+				if (models[provider]) {
+					modelField.value = models[provider];
+				}
 			}
 		</script>
 		<?php
@@ -452,12 +476,16 @@ class Chatbot_AI_Engine {
 		// Get user message
 		$user_message = isset( $_POST['message'] ) ? sanitize_text_field( $_POST['message'] ) : '';
 
+		log_chatbot_ai_engine( 'Incoming AJAX message', $user_message );
+
 		if ( empty( $user_message ) ) {
+			log_chatbot_ai_engine( 'Empty message received', array(), 'warning' );
 			wp_send_json_error( array( 'message' => __( 'Message cannot be empty', 'chatbot-ai-engine' ) ) );
 		}
 
 		// Validate message length
 		if ( strlen( $user_message ) > 5000 ) {
+			log_chatbot_ai_engine( 'Message too long', strlen( $user_message ), 'warning' );
 			wp_send_json_error( array( 'message' => __( 'Message is too long', 'chatbot-ai-engine' ) ) );
 		}
 
@@ -469,6 +497,7 @@ class Chatbot_AI_Engine {
 
 		// Validate settings
 		if ( empty( $settings['api_key'] ) || empty( $settings['api_url'] ) || empty( $settings['model'] ) ) {
+			log_chatbot_ai_engine( 'Plugin not configured', $settings, 'error' );
 			wp_send_json_error( array( 'message' => __( 'Chatbot is not properly configured', 'chatbot-ai-engine' ) ) );
 		}
 
@@ -483,12 +512,14 @@ class Chatbot_AI_Engine {
 		$response = $this->call_ai_api( $user_message, $system_prompt, $settings );
 
 		if ( is_wp_error( $response ) ) {
+			log_chatbot_ai_engine( 'API Error during call', $response->get_error_message(), 'error' );
 			wp_send_json_error( array( 'message' => __( 'API Error: ', 'chatbot-ai-engine' ) . $response->get_error_message() ) );
 		}
 
 		// Trigger after API call action
 		do_action( 'chatbot_ai_engine_after_api_call', $response, $user_message );
 
+		log_chatbot_ai_engine( 'Success response sent back to user' );
 		wp_send_json_success( array( 'message' => $response ) );
 	}
 
@@ -504,7 +535,16 @@ class Chatbot_AI_Engine {
 		$provider = $settings['api_provider'] ?? 'openai';
 		$api_key = $this->decrypt_api_key( $settings['api_key'] );
 		$api_url = $settings['api_url'];
+
+		// For Gemini, API key is usually in the URL
+		if ( 'gemini' === $provider && ! strpos( $api_url, 'key=' ) ) {
+			$api_url = add_query_arg( 'key', $api_key, $api_url );
+		}
+
 		$model = $settings['model'];
+		
+		log_chatbot_ai_engine( "Initiating API call to {$provider}", array( 'model' => $model, 'url' => $api_url ) );
+
 		$max_tokens = absint( $settings['max_tokens'] ?? 1000 );
 		$temperature = floatval( $settings['temperature'] ?? 0.7 );
 
@@ -528,6 +568,7 @@ class Chatbot_AI_Engine {
 		);
 
 		if ( is_wp_error( $response ) ) {
+			log_chatbot_ai_engine( 'wp_remote_post failed', $response->get_error_message(), 'error' );
 			return $response;
 		}
 
@@ -537,6 +578,7 @@ class Chatbot_AI_Engine {
 
 		if ( 200 !== $response_code ) {
 			$error_message = isset( $response_data['error']['message'] ) ? $response_data['error']['message'] : 'Unknown error';
+			log_chatbot_ai_engine( "API returned error code {$response_code}", $error_message, 'error' );
 			return new WP_Error( 'api_error', $error_message );
 		}
 
@@ -544,11 +586,14 @@ class Chatbot_AI_Engine {
 		$ai_message = $this->extract_ai_response( $provider, $response_data );
 
 		if ( empty( $ai_message ) ) {
+			log_chatbot_ai_engine( 'Empty response extracted from API', $response_data, 'warning' );
 			return new WP_Error( 'empty_response', __( 'Empty response from AI API', 'chatbot-ai-engine' ) );
 		}
 
 		// Apply API response filter
 		$ai_message = apply_filters( 'chatbot_ai_engine_api_response', $ai_message, $provider );
+
+		log_chatbot_ai_engine( 'Successful API response received' );
 
 		return $ai_message;
 	}
@@ -565,24 +610,41 @@ class Chatbot_AI_Engine {
 	 * @return string JSON encoded body
 	 */
 	private function prepare_api_body( $provider, $user_message, $system_prompt, $model, $max_tokens, $temperature ) {
-		$body = array(
-			'model'       => $model,
-			'temperature' => $temperature,
-			'messages'    => array(
-				array(
-					'role'    => 'system',
-					'content' => $system_prompt,
+		if ( 'gemini' === $provider ) {
+			$body = array(
+				'contents' => array(
+					array(
+						'role' => 'user',
+						'parts' => array(
+							array( 'text' => $system_prompt . "\n\nUser message: " . $user_message )
+						)
+					)
 				),
-				array(
-					'role'    => 'user',
-					'content' => $user_message,
+				'generationConfig' => array(
+					'temperature' => $temperature,
+					'maxOutputTokens' => $max_tokens,
+				)
+			);
+		} else {
+			$body = array(
+				'model'       => $model,
+				'temperature' => $temperature,
+				'messages'    => array(
+					array(
+						'role'    => 'system',
+						'content' => $system_prompt,
+					),
+					array(
+						'role'    => 'user',
+						'content' => $user_message,
+					),
 				),
-			),
-		);
+			);
 
-		// Add max_tokens based on provider support
-		if ( in_array( $provider, array( 'openai', 'groq', 'custom' ), true ) ) {
-			$body['max_tokens'] = $max_tokens;
+			// Add max_tokens based on provider support
+			if ( in_array( $provider, array( 'openai', 'groq', 'custom' ), true ) ) {
+				$body['max_tokens'] = $max_tokens;
+			}
 		}
 
 		return wp_json_encode( $body );
@@ -625,6 +687,10 @@ class Chatbot_AI_Engine {
 			if ( isset( $response_data['content'][0]['text'] ) ) {
 				return sanitize_text_field( $response_data['content'][0]['text'] );
 			}
+		} elseif ( 'gemini' === $provider ) {
+			if ( isset( $response_data['candidates'][0]['content']['parts'][0]['text'] ) ) {
+				return sanitize_text_field( $response_data['candidates'][0]['content']['parts'][0]['text'] );
+			}
 		} else {
 			if ( isset( $response_data['choices'][0]['message']['content'] ) ) {
 				return sanitize_text_field( $response_data['choices'][0]['message']['content'] );
@@ -632,6 +698,18 @@ class Chatbot_AI_Engine {
 		}
 
 		return '';
+	}
+
+	/**
+	 * Get encryption key safely
+	 * 
+	 * @return string
+	 */
+	private function get_encryption_key() {
+		if ( function_exists( 'wp_salt' ) ) {
+			return wp_salt( 'auth' );
+		}
+		return defined( 'AUTH_KEY' ) ? AUTH_KEY : 'fallback_salt_for_security';
 	}
 
 	/**
@@ -648,10 +726,12 @@ class Chatbot_AI_Engine {
 		$method = 'aes-256-cbc';
 		$iv_length = openssl_cipher_iv_length( $method );
 		$iv = openssl_random_pseudo_bytes( $iv_length );
+		$salt = $this->get_encryption_key();
 
-		$encrypted = openssl_encrypt( $key, $method, CHATBOT_AI_ENGINE_SALT, 0, $iv );
+		$encrypted = openssl_encrypt( $key, $method, $salt, 0, $iv );
 
 		if ( false === $encrypted ) {
+			log_chatbot_ai_engine( 'Encryption failed!', array(), 'error' );
 			return base64_encode( $key ); // Last resort fallback
 		}
 
@@ -672,6 +752,7 @@ class Chatbot_AI_Engine {
 
 		$data = base64_decode( $encrypted, true );
 		if ( false === $data ) {
+			log_chatbot_ai_engine( 'Base64 decode failed for API key', array(), 'error' );
 			return $encrypted;
 		}
 
@@ -679,16 +760,24 @@ class Chatbot_AI_Engine {
 		$iv_length = openssl_cipher_iv_length( $method );
 
 		if ( strlen( $data ) <= $iv_length ) {
-			// Probably old base64-only format
-			return str_replace( CHATBOT_AI_ENGINE_SALT, '', $data );
+			log_chatbot_ai_engine( 'Attempting to decrypt old API key format', array(), 'warning' );
+			// Fallback for old salt format if still exists
+			$salt = defined('CHATBOT_AI_ENGINE_SALT') ? CHATBOT_AI_ENGINE_SALT : $this->get_encryption_key();
+			return str_replace( $salt, '', $data );
 		}
 
 		$iv = substr( $data, 0, $iv_length );
 		$encrypted_text = substr( $data, $iv_length );
+		$salt = $this->get_encryption_key();
 
-		$decrypted = openssl_decrypt( $encrypted_text, $method, CHATBOT_AI_ENGINE_SALT, 0, $iv );
+		$decrypted = openssl_decrypt( $encrypted_text, $method, $salt, 0, $iv );
 
-		return ( false !== $decrypted ) ? $decrypted : $encrypted;
+		if ( false === $decrypted ) {
+			log_chatbot_ai_engine( 'AES Decryption failed!', array(), 'error' );
+			return $encrypted;
+		}
+
+		return $decrypted;
 	}
 
 	/**
