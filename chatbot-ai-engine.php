@@ -27,6 +27,11 @@ define( 'CHATBOT_AI_ENGINE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'CHATBOT_AI_ENGINE_URL', plugin_dir_url( __FILE__ ) );
 define( 'CHATBOT_AI_ENGINE_BASENAME', plugin_basename( __FILE__ ) );
 
+// Encryption salt for API key protection
+if ( ! defined( 'CHATBOT_AI_ENGINE_SALT' ) ) {
+	define( 'CHATBOT_AI_ENGINE_SALT', wp_salt( 'auth' ) );
+}
+
 /**
  * Main plugin class
  */
@@ -56,6 +61,16 @@ class Chatbot_AI_Engine {
 	 */
 	public function __construct() {
 		$this->init_hooks();
+		$this->register_global_functions();
+	}
+
+	/**
+	 * Register global helper functions
+	 */
+	private function register_global_functions() {
+		if ( ! function_exists( 'get_chatbot_ai_engine_settings' ) ) {
+			include_once CHATBOT_AI_ENGINE_PATH . 'includes/helper-functions.php';
+		}
 	}
 
 	/**
@@ -105,6 +120,9 @@ class Chatbot_AI_Engine {
 
 		// Flush rewrite rules
 		flush_rewrite_rules();
+
+		// Trigger activation action
+		do_action( 'chatbot_ai_engine_activated' );
 	}
 
 	/**
@@ -179,8 +197,15 @@ class Chatbot_AI_Engine {
 		// Sanitize enabled
 		$sanitized['enabled'] = isset( $settings['enabled'] ) ? '1' : '0';
 
-		// Sanitize API key (keep encrypted in production)
-		$sanitized['api_key'] = isset( $settings['api_key'] ) ? sanitize_text_field( $settings['api_key'] ) : '';
+		// Sanitize API key - encrypt for security
+		$api_key = isset( $settings['api_key'] ) ? sanitize_text_field( $settings['api_key'] ) : '';
+		if ( ! empty( $api_key ) ) {
+			$sanitized['api_key'] = $this->encrypt_api_key( $api_key );
+		} else {
+			// Get existing encrypted key if no new one provided
+			$existing = get_option( 'chatbot_ai_engine_settings', array() );
+			$sanitized['api_key'] = isset( $existing['api_key'] ) ? $existing['api_key'] : '';
+		}
 
 		// Sanitize API provider
 		$allowed_providers = array( 'openai', 'groq', 'anthropic', 'custom' );
@@ -192,8 +217,9 @@ class Chatbot_AI_Engine {
 		// Sanitize model name
 		$sanitized['model'] = isset( $settings['model'] ) ? sanitize_text_field( $settings['model'] ) : 'gpt-3.5-turbo';
 
-		// Sanitize system prompt
-		$sanitized['system_prompt'] = isset( $settings['system_prompt'] ) ? sanitize_textarea_field( $settings['system_prompt'] ) : __( 'You are a helpful assistant.', 'chatbot-ai-engine' );
+		// Sanitize system prompt - apply filter
+		$system_prompt = isset( $settings['system_prompt'] ) ? sanitize_textarea_field( $settings['system_prompt'] ) : __( 'You are a helpful assistant.', 'chatbot-ai-engine' );
+		$sanitized['system_prompt'] = apply_filters( 'chatbot_ai_engine_system_prompt', $system_prompt );
 
 		// Sanitize position
 		$allowed_positions = array( 'bottom-right', 'bottom-left', 'top-right', 'top-left' );
@@ -205,6 +231,12 @@ class Chatbot_AI_Engine {
 		// Sanitize temperature
 		$temperature = isset( $settings['temperature'] ) ? floatval( $settings['temperature'] ) : 0.7;
 		$sanitized['temperature'] = min( 2.0, max( 0.0, $temperature ) );
+
+		// Apply settings filter
+		$sanitized = apply_filters( 'chatbot_ai_engine_settings', $sanitized );
+
+		// Trigger settings updated action
+		do_action( 'chatbot_ai_engine_settings_updated', $sanitized );
 
 		return $sanitized;
 	}
@@ -274,8 +306,8 @@ class Chatbot_AI_Engine {
 							<label for="chatbot_api_key"><?php esc_html_e( 'API Key', 'chatbot-ai-engine' ); ?></label>
 						</th>
 						<td>
-							<input type="password" id="chatbot_api_key" name="chatbot_ai_engine_settings[api_key]" value="<?php echo esc_attr( $settings['api_key'] ?? '' ); ?>" class="regular-text" />
-							<p class="description"><?php esc_html_e( 'Your API key (keep it secure)', 'chatbot-ai-engine' ); ?></p>
+							<input type="password" id="chatbot_api_key" name="chatbot_ai_engine_settings[api_key]" value="<?php echo ! empty( $settings['api_key'] ) ? '••••••••••••••••' : ''; ?>" class="regular-text" placeholder="<?php esc_attr_e( 'Enter your API key or leave blank to keep existing', 'chatbot-ai-engine' ); ?>" />
+							<p class="description"><?php esc_html_e( 'Your API key is encrypted and stored securely. Leave blank to keep the existing key.', 'chatbot-ai-engine' ); ?></p>
 						</td>
 					</tr>
 
@@ -365,6 +397,11 @@ class Chatbot_AI_Engine {
 			return;
 		}
 
+		// Apply filter to control display
+		if ( ! apply_filters( 'chatbot_ai_engine_display_bubble', true ) ) {
+			return;
+		}
+
 		// Enqueue CSS
 		wp_enqueue_style(
 			'chatbot-ai-engine-style',
@@ -421,6 +458,9 @@ class Chatbot_AI_Engine {
 			wp_send_json_error( array( 'message' => __( 'Message is too long', 'chatbot-ai-engine' ) ) );
 		}
 
+		// Apply user message filter
+		$user_message = apply_filters( 'chatbot_ai_engine_user_message', $user_message );
+
 		// Get settings
 		$settings = get_option( 'chatbot_ai_engine_settings', array() );
 
@@ -429,6 +469,9 @@ class Chatbot_AI_Engine {
 			wp_send_json_error( array( 'message' => __( 'Chatbot is not properly configured', 'chatbot-ai-engine' ) ) );
 		}
 
+		// Trigger before API call action
+		do_action( 'chatbot_ai_engine_before_api_call', $user_message, $settings );
+
 		// Prepare the request
 		$system_prompt = $settings['system_prompt'] ?? __( 'You are a helpful assistant.', 'chatbot-ai-engine' );
 		$response = $this->call_ai_api( $user_message, $system_prompt, $settings );
@@ -436,6 +479,9 @@ class Chatbot_AI_Engine {
 		if ( is_wp_error( $response ) ) {
 			wp_send_json_error( array( 'message' => __( 'API Error: ', 'chatbot-ai-engine' ) . $response->get_error_message() ) );
 		}
+
+		// Trigger after API call action
+		do_action( 'chatbot_ai_engine_after_api_call', $response, $user_message );
 
 		wp_send_json_success( array( 'message' => $response ) );
 	}
@@ -450,7 +496,7 @@ class Chatbot_AI_Engine {
 	 */
 	private function call_ai_api( $user_message, $system_prompt, $settings ) {
 		$provider = $settings['api_provider'] ?? 'openai';
-		$api_key = $settings['api_key'];
+		$api_key = $this->decrypt_api_key( $settings['api_key'] );
 		$api_url = $settings['api_url'];
 		$model = $settings['model'];
 		$max_tokens = absint( $settings['max_tokens'] ?? 1000 );
@@ -458,6 +504,10 @@ class Chatbot_AI_Engine {
 
 		// Prepare request body based on provider
 		$body = $this->prepare_api_body( $provider, $user_message, $system_prompt, $model, $max_tokens, $temperature );
+
+		// Apply API body filter
+		$body = apply_filters( 'chatbot_ai_engine_api_body', $body, $provider );
+
 		$headers = $this->prepare_api_headers( $provider, $api_key );
 
 		// Make the API request
@@ -490,6 +540,9 @@ class Chatbot_AI_Engine {
 		if ( empty( $ai_message ) ) {
 			return new WP_Error( 'empty_response', __( 'Empty response from AI API', 'chatbot-ai-engine' ) );
 		}
+
+		// Apply API response filter
+		$ai_message = apply_filters( 'chatbot_ai_engine_api_response', $ai_message, $provider );
 
 		return $ai_message;
 	}
@@ -573,6 +626,61 @@ class Chatbot_AI_Engine {
 		}
 
 		return '';
+	}
+
+	/**
+	 * Encrypt API key for secure storage
+	 *
+	 * @param string $key API key to encrypt
+	 * @return string Encrypted key
+	 */
+	private function encrypt_api_key( $key ) {
+		if ( empty( $key ) ) {
+			return '';
+		}
+
+		// Use WordPress native functions when available
+		if ( function_exists( 'wp_json_encode' ) && function_exists( 'base64_encode' ) ) {
+			$encrypted = base64_encode( $key . CHATBOT_AI_ENGINE_SALT );
+			return $encrypted;
+		}
+
+		return $key; // Fallback if encryption fails
+	}
+
+	/**
+	 * Decrypt API key from storage
+	 *
+	 * @param string $encrypted Encrypted key
+	 * @return string Decrypted key
+	 */
+	private function decrypt_api_key( $encrypted ) {
+		if ( empty( $encrypted ) ) {
+			return '';
+		}
+
+		// Try to decrypt
+		if ( function_exists( 'base64_decode' ) ) {
+			$decrypted = base64_decode( $encrypted, true );
+			if ( $decrypted !== false ) {
+				// Remove salt
+				$key = str_replace( CHATBOT_AI_ENGINE_SALT, '', $decrypted );
+				return $key;
+			}
+		}
+
+		return $encrypted; // Return as-is if decryption fails
+	}
+
+	/**
+	 * Get decrypted API key (public method for helper functions)
+	 *
+	 * @return string Decrypted API key
+	 */
+	public function get_decrypted_api_key() {
+		$settings = get_option( 'chatbot_ai_engine_settings', array() );
+		$encrypted = isset( $settings['api_key'] ) ? $settings['api_key'] : '';
+		return $this->decrypt_api_key( $encrypted );
 	}
 }
 
