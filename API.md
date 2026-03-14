@@ -126,7 +126,7 @@ add_filter( 'chatbot_ai_engine_user_message', function( $message ) {
 
 ### `chatbot_ai_engine_system_prompt`
 
-Филтър за модификация на системния промпт.
+Филтър за модификация на системния промпт. Прилага се динамично при всяка AJAX заявка към AI доставчика.
 
 **Хук:**
 ```php
@@ -134,17 +134,16 @@ apply_filters( 'chatbot_ai_engine_system_prompt', $prompt );
 ```
 
 **Параметри:**
-- `$prompt` (string) - Текущия системен промпт
+- `$prompt` (string) - Текущия системен промпт от настройките
 
 **Върнача стойност:**
 - (string) - Модифициран промпт
 
-**Пример:**
+**Пример (Динамичен контекст спрямо страницата):**
 ```php
 add_filter( 'chatbot_ai_engine_system_prompt', function( $prompt ) {
-    // Добавете инструкция если потребителя е администратор
-    if ( current_user_can( 'manage_options' ) ) {
-        $prompt .= ' You are chatting with a site administrator.';
+    if ( is_cart() ) {
+        return 'Вие сте асистент по продажбите. Помогнете на потребителя да завърши поръчката си.';
     }
     return $prompt;
 } );

@@ -73,7 +73,7 @@ function get_chatbot_ai_engine_model() {
 }
 
 /**
- * Get the AI provider
+ * Get the currently active AI provider
  *
  * @return string Provider name (openai, groq, anthropic, custom)
  */
@@ -221,12 +221,12 @@ function get_chatbot_ai_engine_providers() {
 }
 
 /**
- * Get provider by key
+ * Get provider data by key
  *
  * @param string $key Provider key
  * @return array|null Provider array or null if not found
  */
-function get_chatbot_ai_engine_provider( $key ) {
+function get_chatbot_ai_engine_provider_by_key( $key ) {
 	$providers = get_chatbot_ai_engine_providers();
 	return isset( $providers[ $key ] ) ? $providers[ $key ] : null;
 }
@@ -245,14 +245,11 @@ function update_chatbot_ai_engine_settings( $settings ) {
 	$existing = get_option( 'chatbot_ai_engine_settings', array() );
 	$merged = array_merge( $existing, $settings );
 
-	// Sanitize before saving
+	// Sanitize before saving using the main plugin class
 	$plugin = Chatbot_AI_Engine::get_instance();
-	if ( method_exists( $plugin, 'sanitize_settings' ) ) {
-		// Would need to make sanitize_settings public for this to work
-		// For now, just save directly
-	}
+	$sanitized = $plugin->sanitize_settings( $merged );
 
-	return update_option( 'chatbot_ai_engine_settings', $merged );
+	return update_option( 'chatbot_ai_engine_settings', $sanitized );
 }
 
 /**

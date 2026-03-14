@@ -200,11 +200,15 @@ class Chatbot_AI_Engine {
 		// Sanitize API key - encrypt for security
 		$api_key = isset( $settings['api_key'] ) ? sanitize_text_field( $settings['api_key'] ) : '';
 		if ( ! empty( $api_key ) ) {
-			$sanitized['api_key'] = $this->encrypt_api_key( $api_key );
+			// Don't re-encrypt if it's the placeholder (indicates existing key)
+			if ( '••••••••••••••••' !== $api_key ) {
+				$sanitized['api_key'] = $this->encrypt_api_key( $api_key );
+			} else {
+				$existing = get_option( 'chatbot_ai_engine_settings', array() );
+				$sanitized['api_key'] = isset( $existing['api_key'] ) ? $existing['api_key'] : '';
+			}
 		} else {
-			// Get existing encrypted key if no new one provided
-			$existing = get_option( 'chatbot_ai_engine_settings', array() );
-			$sanitized['api_key'] = isset( $existing['api_key'] ) ? $existing['api_key'] : '';
+			$sanitized['api_key'] = '';
 		}
 
 		// Sanitize API provider
@@ -217,9 +221,8 @@ class Chatbot_AI_Engine {
 		// Sanitize model name
 		$sanitized['model'] = isset( $settings['model'] ) ? sanitize_text_field( $settings['model'] ) : 'gpt-3.5-turbo';
 
-		// Sanitize system prompt - apply filter
-		$system_prompt = isset( $settings['system_prompt'] ) ? sanitize_textarea_field( $settings['system_prompt'] ) : __( 'You are a helpful assistant.', 'chatbot-ai-engine' );
-		$sanitized['system_prompt'] = apply_filters( 'chatbot_ai_engine_system_prompt', $system_prompt );
+		// Sanitize system prompt
+		$sanitized['system_prompt'] = isset( $settings['system_prompt'] ) ? sanitize_textarea_field( $settings['system_prompt'] ) : __( 'You are a helpful assistant.', 'chatbot-ai-engine' );
 
 		// Sanitize position
 		$allowed_positions = array( 'bottom-right', 'bottom-left', 'top-right', 'top-left' );
@@ -469,11 +472,14 @@ class Chatbot_AI_Engine {
 			wp_send_json_error( array( 'message' => __( 'Chatbot is not properly configured', 'chatbot-ai-engine' ) ) );
 		}
 
+		// Prepare the dynamic system prompt with filter
+		$system_prompt = $settings['system_prompt'] ?? __( 'You are a helpful assistant.', 'chatbot-ai-engine' );
+		$system_prompt = apply_filters( 'chatbot_ai_engine_system_prompt', $system_prompt );
+
 		// Trigger before API call action
 		do_action( 'chatbot_ai_engine_before_api_call', $user_message, $settings );
 
-		// Prepare the request
-		$system_prompt = $settings['system_prompt'] ?? __( 'You are a helpful assistant.', 'chatbot-ai-engine' );
+		// Call AI API
 		$response = $this->call_ai_api( $user_message, $system_prompt, $settings );
 
 		if ( is_wp_error( $response ) ) {
@@ -639,13 +645,18 @@ class Chatbot_AI_Engine {
 			return '';
 		}
 
-		// Use WordPress native functions when available
-		if ( function_exists( 'wp_json_encode' ) && function_exists( 'base64_encode' ) ) {
-			$encrypted = base64_encode( $key . CHATBOT_AI_ENGINE_SALT );
-			return $encrypted;
+		$method = 'aes-256-cbc';
+		$iv_length = openssl_cipher_iv_length( $method );
+		$iv = openssl_random_pseudo_bytes( $iv_length );
+
+		$encrypted = openssl_encrypt( $key, $method, CHATBOT_AI_ENGINE_SALT, 0, $iv );
+
+		if ( false === $encrypted ) {
+			return base64_encode( $key ); // Last resort fallback
 		}
 
-		return $key; // Fallback if encryption fails
+		// Store IV + Encrypted key
+		return base64_encode( $iv . $encrypted );
 	}
 
 	/**
@@ -659,17 +670,25 @@ class Chatbot_AI_Engine {
 			return '';
 		}
 
-		// Try to decrypt
-		if ( function_exists( 'base64_decode' ) ) {
-			$decrypted = base64_decode( $encrypted, true );
-			if ( $decrypted !== false ) {
-				// Remove salt
-				$key = str_replace( CHATBOT_AI_ENGINE_SALT, '', $decrypted );
-				return $key;
-			}
+		$data = base64_decode( $encrypted, true );
+		if ( false === $data ) {
+			return $encrypted;
 		}
 
-		return $encrypted; // Return as-is if decryption fails
+		$method = 'aes-256-cbc';
+		$iv_length = openssl_cipher_iv_length( $method );
+
+		if ( strlen( $data ) <= $iv_length ) {
+			// Probably old base64-only format
+			return str_replace( CHATBOT_AI_ENGINE_SALT, '', $data );
+		}
+
+		$iv = substr( $data, 0, $iv_length );
+		$encrypted_text = substr( $data, $iv_length );
+
+		$decrypted = openssl_decrypt( $encrypted_text, $method, CHATBOT_AI_ENGINE_SALT, 0, $iv );
+
+		return ( false !== $decrypted ) ? $decrypted : $encrypted;
 	}
 
 	/**
