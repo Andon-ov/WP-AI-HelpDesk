@@ -64,13 +64,16 @@ class Chatbot_AI_Engine {
 				'api_provider' => 'groq',
 				'api_url'      => 'https://api.groq.com/openai/v1/chat/completions',
 				'model'        => 'llama-3.3-70b-versatile',
-				'system_prompt' => "Ти си официалният AI асистент на {site_name} ({site_url}). 
-Твоята цел е да помагаш на потребителите да намерят КУРСОВЕ, рецепти и кулинарни знания.
+				'system_prompt' => "Ти си официалният AI асистент на {site_name}. 
+
+ПОЗДРАВ:
+- Ако {user_name} не е празно, започни със: 'Здравейте, {user_name}! Радвам се да ви видя.'
+- Ако {user_name} е празно, започни със: 'Здравейте! Вие се намирате в {site_name} – мястото за професионално кулинарно развитие.'
 
 ПРАВИЛА:
 1. ПЪРВО ПРОВЕРИ DATASET: Използвай САМО информацията от предоставените данни за конкретни рецепти и курсове.
-2. ЦЕНИ: Винаги казвай цената на курса, ако я има в DATASET.
-3. ЛИНКОВЕ: Винаги давай пълни, кликаеми линкове.
+2. ЦЕНИ: Винаги казвай цената на курса (в EUR), ако я има в DATASET.
+3. ЛИНКОВЕ: Винаги давай пълни Markdown линкове: [Заглавие](URL).
 4. ОТГОВОР: Бъди професионален кулинарен инструктор. Отговаряй на български.",
 				'position'     => 'bottom-right',
 				'temperature'  => 0.2
@@ -200,7 +203,7 @@ class Chatbot_AI_Engine {
 
 	public function enqueue_frontend_assets() {
 		$s = get_option( 'chatbot_ai_engine_settings', array() );
-		if ( ! ($s['enabled'] ?? 0) ) return;
+		if ( '1' !== ($s['enabled'] ?? '0') ) return;
 		wp_enqueue_style( 'chatbot-ai-style', CHATBOT_AI_ENGINE_URL . 'assets/style.css', array(), CHATBOT_AI_ENGINE_VERSION );
 		wp_enqueue_script( 'chatbot-ai-script', CHATBOT_AI_ENGINE_URL . 'assets/script.js', array(), CHATBOT_AI_ENGINE_VERSION, true );
 		wp_localize_script( 'chatbot-ai-script', 'chatbotAIEngine', array(
@@ -232,7 +235,6 @@ class Chatbot_AI_Engine {
 			$prompt 
 		);
 		
-		// If it's just a greeting trigger, we don't need context search
 		if ( $msg === 'INIT_GREETING' ) {
 			$response = $this->call_ai_api( "Моля, поздрави ме професионално.", $prompt, $settings, $history );
 		} else {
@@ -262,12 +264,7 @@ class Chatbot_AI_Engine {
 		$matches = array();
 		if ( ! empty($index) && ! empty($keywords) ) {
 			foreach ( $index as $item ) {
-				$score = 0; 
-				$title = mb_strtolower($item['title']); 
-				$content = mb_strtolower($item['content']); 
-				$tags = mb_strtolower($item['tags'] ?? '');
-				$hits = 0;
-
+				$score = 0; $title = mb_strtolower($item['title']); $content = mb_strtolower($item['content']); $tags = mb_strtolower($item['tags'] ?? ''); $hits = 0;
 				foreach ( $keywords as $kw ) {
 					$found = false;
 					if ( mb_strpos($title, $kw) !== false ) { $score += 50; $found = true; } 
@@ -344,14 +341,7 @@ class Chatbot_AI_Engine {
 					$text = $p->post_content;
 				}
 				$clean = wp_strip_all_tags(strip_shortcodes($text));
-				$data[] = array(
-					'id' => $id, 
-					'title' => get_the_title($id), 
-					'type' => $type, 
-					'content' => mb_substr(preg_replace('/\s+/', ' ', $clean), 0, 500), 
-					'url' => get_permalink($id),
-					'tags' => ($type === 'product' ? 'курс обучение лекция закупи купи цена' : '')
-				);
+				$data[] = array('id' => $id, 'title' => get_the_title($id), 'type' => $type, 'content' => mb_substr(preg_replace('/\s+/', ' ', $clean), 0, 500), 'url' => get_permalink($id), 'tags' => ($type === 'product' ? 'курс обучение лекция закупи купи цена' : ''));
 			}
 		}
 
@@ -369,13 +359,9 @@ class Chatbot_AI_Engine {
 
 	private function call_ai_api( $msg, $prompt, $settings, $history = array() ) {
 		$key = $this->get_decrypted_api_key( $settings );
-		
 		$messages = array( array('role' => 'system', 'content' => $prompt) );
-		if ( ! empty($history) && is_array($history) ) {
-			foreach ( $history as $h ) $messages[] = array('role' => $h['role'], 'content' => $h['content']);
-		}
+		if ( ! empty($history) && is_array($history) ) foreach ( $history as $h ) $messages[] = array('role' => $h['role'], 'content' => $h['content']);
 		$messages[] = array('role' => 'user', 'content' => $msg);
-
 		$body = array( 'model' => $settings['model'], 'temperature' => floatval($settings['temperature']), 'messages' => $messages );
 		$response = wp_remote_post( $settings['api_url'], array( 'headers' => array( 'Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json' ), 'body' => wp_json_encode($body), 'timeout' => 30 ) );
 		if ( is_wp_error($response) ) return $response;
@@ -396,7 +382,7 @@ class Chatbot_AI_Engine {
 		return $res !== false ? $res : $e;
 	}
 	private function get_encryption_key() { return function_exists('wp_salt') ? wp_salt('auth') : (defined('AUTH_KEY') ? AUTH_KEY : 'salt'); }
-	public function get_decrypted_api_key( $settings = array() ) {
+	private function get_decrypted_api_key( $settings = array() ) {
 		if ( empty($settings) ) $settings = get_option( 'chatbot_ai_engine_settings', array() );
 		return $this->decrypt_api_key( $settings['api_key'] ?? '' );
 	}
