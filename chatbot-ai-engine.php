@@ -210,6 +210,7 @@ class Chatbot_AI_Engine {
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce' => wp_create_nonce( 'chatbot_ai_engine_nonce' ),
 			'position' => $s['position'] ?? 'bottom-right',
+			'isAdminBar' => is_admin_bar_showing(),
 			'i18n' => array( 'placeholder' => 'Пишете съобщение...', 'send' => 'Изпрати', 'loading' => '...', 'error' => 'Грешка', 'chatTitle' => 'Chef & Gastro Assistant', 'closeChat' => 'Затвори', 'goodbye' => 'Заповядайте отново! 👋' )
 		));
 	}
@@ -223,17 +224,20 @@ class Chatbot_AI_Engine {
 		if ( empty($msg) ) wp_send_json_error( array('message' => 'Empty') );
 		
 		$history = json_decode( stripslashes( $_POST['history'] ?? '[]' ), true );
+		if ( is_array($history) ) {
+			$history = array_filter( array_map( function($h) {
+				if ( ! isset($h['role'], $h['content']) ) return null;
+				if ( ! in_array($h['role'], array('user', 'assistant')) ) return null;
+				return array( 'role' => $h['role'], 'content' => sanitize_textarea_field( $h['content'] ) );
+			}, $history ) );
+		}
 		
 		$current_user = wp_get_current_user();
 		$user_name = is_user_logged_in() ? $current_user->display_name : '';
 
 		$settings = $s;
 		$prompt = $settings['system_prompt'] ?? '';
-		$prompt = str_replace( 
-			array('{site_url}', '{site_name}', '{user_name}'), 
-			array(get_site_url(), get_bloginfo('name'), $user_name), 
-			$prompt 
-		);
+		$prompt = str_replace( array('{site_url}', '{site_name}', '{user_name}'), array(get_site_url(), get_bloginfo('name'), $user_name), $prompt );
 		
 		if ( $msg === 'INIT_GREETING' ) {
 			$response = $this->call_ai_api( "Моля, поздрави ме професионално.", $prompt, $settings, $history );
@@ -370,7 +374,7 @@ class Chatbot_AI_Engine {
 		if ( empty($raw) ) return '';
 		$text = preg_replace('/\[([^\]]+)\]\(([^\)]+)\)/', '<a href="$2" target="_blank">$1</a>', $raw);
 		$text = preg_replace('/(?<!href=")(https?:\/\/[^\s<]+)/', '<a href="$1" target="_blank">$1</a>', $text);
-		return wp_kses($text, array('strong' => array(), 'br' => array(), 'p' => array(), 'ul' => array(), 'li' => array(), 'a' => array('href' => array(), 'target' => array(), 'title' => array())));
+		return nl2br( wp_kses($text, array('strong' => array(), 'br' => array(), 'p' => array(), 'ul' => array(), 'li' => array(), 'a' => array('href' => array(), 'target' => array(), 'title' => array()))) );
 	}
 
 	private function encrypt_api_key($k) { $m = 'aes-256-cbc'; $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length($m)); return base64_encode($iv . openssl_encrypt($k, $m, $this->get_encryption_key(), 0, $iv)); }
@@ -382,7 +386,7 @@ class Chatbot_AI_Engine {
 		return $res !== false ? $res : $e;
 	}
 	private function get_encryption_key() { return function_exists('wp_salt') ? wp_salt('auth') : (defined('AUTH_KEY') ? AUTH_KEY : 'salt'); }
-	private function get_decrypted_api_key( $settings = array() ) {
+	public function get_decrypted_api_key( $settings = array() ) {
 		if ( empty($settings) ) $settings = get_option( 'chatbot_ai_engine_settings', array() );
 		return $this->decrypt_api_key( $settings['api_key'] ?? '' );
 	}

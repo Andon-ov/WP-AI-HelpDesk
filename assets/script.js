@@ -20,6 +20,12 @@
 
 		init: function() {
 			if (typeof chatbotAIEngine === 'undefined') return;
+			
+			// Initialize Session ID if missing
+			if (!sessionStorage.getItem('chatbot-ai-engine-session-id')) {
+				sessionStorage.setItem('chatbot-ai-engine-session-id', Date.now().toString());
+			}
+
 			this.createDOM();
 			this.bindEvents();
 		},
@@ -28,6 +34,11 @@
 			const container = document.createElement('div');
 			container.id = this.config.containerId;
 			container.className = `chatbot-ai-engine-position-${chatbotAIEngine.position || 'bottom-right'}`;
+
+			// Handle Admin Bar positioning
+			if (chatbotAIEngine.isAdminBar) {
+				container.style.bottom = '52px'; // 20px default + 32px admin bar
+			}
 
 			const bubble = document.createElement('div');
 			bubble.id = this.config.bubbleId;
@@ -81,7 +92,7 @@
 			this.state.isOpen = true;
 			document.getElementById(this.config.inputId).focus();
 
-			// Auto-greeting if empty
+			// Auto-greeting on first open
 			if (this.state.messages.length === 0 && !this.state.isLoading) {
 				this.sendGreeting();
 			}
@@ -100,7 +111,7 @@
 				this.state.messages = [];
 				this.state.isOpen = false;
 				
-				// Clear local storage
+				// Clear storage
 				const sessionId = sessionStorage.getItem('chatbot-ai-engine-session-id');
 				localStorage.removeItem(`chatbot-ai-engine-messages-${sessionId}`);
 			}, 1500);
@@ -112,7 +123,7 @@
 
 			const formData = new FormData();
 			formData.append('action', 'chatbot_send_message');
-			formData.append('message', 'INIT_GREETING'); // Hidden trigger
+			formData.append('message', 'INIT_GREETING');
 			formData.append('history', JSON.stringify([]));
 			formData.append('nonce', chatbotAIEngine.nonce);
 
@@ -134,10 +145,9 @@
 			const msg = input.value.trim();
 			if (!msg || this.state.isLoading) return;
 
-			// Prepare history (last 6 messages)
 			const history = this.state.messages.slice(-6).map(m => ({
 				role: m.sender === 'user' ? 'user' : 'assistant',
-				content: m.text.replace(/<[^>]*>?/gm, '') // Strip HTML
+				content: m.text.replace(/<[^>]*>?/gm, '')
 			}));
 
 			this.addMessage(msg, 'user');
@@ -183,7 +193,7 @@
 			container.appendChild(div);
 			container.scrollTop = container.scrollHeight;
 
-			if (sender !== 'error') {
+			if (sender !== 'error' && sender !== 'loading') {
 				this.state.messages.push({ text, sender });
 				this.saveMessages();
 			}
@@ -206,7 +216,9 @@
 
 		saveMessages: function() {
 			const sessionId = sessionStorage.getItem('chatbot-ai-engine-session-id');
-			localStorage.setItem(`chatbot-ai-engine-messages-${sessionId}`, JSON.stringify(this.state.messages));
+			if (sessionId) {
+				localStorage.setItem(`chatbot-ai-engine-messages-${sessionId}`, JSON.stringify(this.state.messages));
+			}
 		}
 	};
 
