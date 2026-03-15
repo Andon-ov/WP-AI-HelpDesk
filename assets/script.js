@@ -1,15 +1,11 @@
 /**
  * Chatbot AI Engine - Frontend Script
- * Manages chat UI, AJAX communication, and message handling
  */
 
 (function() {
 	'use strict';
 
 	const ChatbotAIEngine = {
-		/**
-		 * Configuration
-		 */
 		config: {
 			containerId: 'chatbot-ai-engine-container',
 			bubbleId: 'chatbot-ai-engine-bubble',
@@ -20,82 +16,41 @@
 			closeBtnId: 'chatbot-ai-engine-close-btn',
 		},
 
-		/**
-		 * State
-		 */
-		state: {
-			isOpen: false,
-			isLoading: false,
-			messages: [],
-		},
+		state: { isOpen: false, isLoading: false, messages: [] },
 
-		/**
-		 * Initialize chatbot
-		 */
 		init: function() {
-			if (typeof chatbotAIEngine === 'undefined') {
-				console.error('Chatbot AI Engine: Global object not found');
-				return;
-			}
-
+			if (typeof chatbotAIEngine === 'undefined') return;
 			this.createDOM();
 			this.bindEvents();
-			this.loadMessages();
+			// We no longer load old messages to start fresh every time as requested
 		},
 
-		/**
-		 * Create DOM structure
-		 */
 		createDOM: function() {
 			const container = document.createElement('div');
 			container.id = this.config.containerId;
 			container.className = `chatbot-ai-engine-position-${chatbotAIEngine.position || 'bottom-right'}`;
 
-			// Floating bubble
 			const bubble = document.createElement('div');
 			bubble.id = this.config.bubbleId;
 			bubble.className = 'chatbot-ai-engine-bubble';
 			bubble.setAttribute('role', 'button');
 			bubble.setAttribute('tabindex', '0');
-			bubble.setAttribute('aria-label', chatbotAIEngine.i18n.chatTitle || 'AI Assistant');
-			bubble.innerHTML = `
-				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-				</svg>
-			`;
+			bubble.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
 
-			// Chat window
 			const chatWindow = document.createElement('div');
 			chatWindow.id = this.config.windowId;
 			chatWindow.className = 'chatbot-ai-engine-window';
-			chatWindow.setAttribute('role', 'dialog');
-			chatWindow.setAttribute('aria-labelledby', 'chatbot-ai-engine-title');
 			chatWindow.style.display = 'none';
 			chatWindow.innerHTML = `
 				<div class="chatbot-ai-engine-header">
-					<h3 id="chatbot-ai-engine-title">${chatbotAIEngine.i18n.chatTitle || 'AI Assistant'}</h3>
-					<button id="${this.config.closeBtnId}" class="chatbot-ai-engine-close" aria-label="${chatbotAIEngine.i18n.closeChat || 'Close chat'}">
-						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<line x1="18" y1="6" x2="6" y2="18"></line>
-							<line x1="6" y1="6" x2="18" y2="18"></line>
-						</svg>
-					</button>
+					<h3>${chatbotAIEngine.i18n.chatTitle}</h3>
+					<button id="${this.config.closeBtnId}" class="chatbot-ai-engine-close">&times;</button>
 				</div>
 				<div id="${this.config.messagesId}" class="chatbot-ai-engine-messages"></div>
 				<div class="chatbot-ai-engine-input-wrapper">
-					<input
-						type="text"
-						id="${this.config.inputId}"
-						class="chatbot-ai-engine-input"
-						placeholder="${chatbotAIEngine.i18n.placeholder || 'Type your message...'}"
-						maxlength="5000"
-						aria-label="Message input"
-					/>
-					<button id="${this.config.sendBtnId}" class="chatbot-ai-engine-send-btn" aria-label="${chatbotAIEngine.i18n.send || 'Send'}">
-						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<line x1="22" y1="2" x2="11" y2="13"></line>
-							<polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-						</svg>
+					<input type="text" id="${this.config.inputId}" class="chatbot-ai-engine-input" placeholder="${chatbotAIEngine.i18n.placeholder}" maxlength="5000" />
+					<button id="${this.config.sendBtnId}" class="chatbot-ai-engine-send-btn">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
 					</button>
 				</div>
 			`;
@@ -105,317 +60,121 @@
 			document.body.appendChild(container);
 		},
 
-		/**
-		 * Bind event listeners
-		 */
 		bindEvents: function() {
 			const bubble = document.getElementById(this.config.bubbleId);
 			const closeBtn = document.getElementById(this.config.closeBtnId);
 			const sendBtn = document.getElementById(this.config.sendBtnId);
 			const input = document.getElementById(this.config.inputId);
 
-			if (bubble) {
-				bubble.addEventListener('click', () => this.toggleWindow());
-				bubble.addEventListener('keypress', (e) => {
-					if (e.key === 'Enter' || e.key === ' ') {
-						e.preventDefault();
-						this.toggleWindow();
-					}
-				});
-			}
-
-			if (closeBtn) {
-				closeBtn.addEventListener('click', () => this.closeWindow());
-			}
-
-			if (sendBtn) {
-				sendBtn.addEventListener('click', () => this.sendMessage());
-			}
-
-			if (input) {
-				input.addEventListener('keypress', (e) => {
-					if (e.key === 'Enter' && !e.shiftKey) {
-						e.preventDefault();
-						this.sendMessage();
-					}
-				});
-			}
-
-			// Close on Escape key
-			document.addEventListener('keydown', (e) => {
-				if (e.key === 'Escape' && this.state.isOpen) {
-					this.closeWindow();
-				}
-			});
+			if (bubble) bubble.addEventListener('click', () => this.toggleWindow());
+			if (closeBtn) closeBtn.addEventListener('click', () => this.closeAndClear());
+			if (sendBtn) sendBtn.addEventListener('click', () => this.sendMessage());
+			if (input) input.addEventListener('keypress', (e) => { if (e.key === 'Enter') this.sendMessage(); });
 		},
 
-		/**
-		 * Toggle chat window
-		 */
 		toggleWindow: function() {
-			if (this.state.isOpen) {
-				this.closeWindow();
-			} else {
-				this.openWindow();
-			}
+			if (this.state.isOpen) this.closeAndClear();
+			else this.openWindow();
 		},
 
-		/**
-		 * Open chat window
-		 */
 		openWindow: function() {
-			const chatWindow = document.getElementById(this.config.windowId);
-			const input = document.getElementById(this.config.inputId);
-
-			if (chatWindow) {
-				chatWindow.style.display = 'flex';
-				this.state.isOpen = true;
-
-				// Focus input after animation
-				setTimeout(() => {
-					if (input) {
-						input.focus();
-					}
-				}, 300);
-			}
+			document.getElementById(this.config.windowId).style.display = 'flex';
+			this.state.isOpen = true;
+			document.getElementById(this.config.inputId).focus();
 		},
 
-		/**
-		 * Close chat window
-		 */
-		closeWindow: function() {
-			const chatWindow = document.getElementById(this.config.windowId);
-
-			if (chatWindow) {
-				chatWindow.style.display = 'none';
+		closeAndClear: function() {
+			if (!this.state.isOpen) return;
+			
+			// Show goodbye message
+			this.addMessage(chatbotAIEngine.i18n.goodbye, 'bot');
+			
+			// Wait a bit then close and clear
+			setTimeout(() => {
+				document.getElementById(this.config.windowId).style.display = 'none';
+				document.getElementById(this.config.messagesId).innerHTML = '';
+				this.state.messages = [];
 				this.state.isOpen = false;
-			}
+				
+				// Clear storage
+				const sessionId = sessionStorage.getItem('chatbot-ai-engine-session-id');
+				localStorage.removeItem(`chatbot-ai-engine-messages-${sessionId}`);
+			}, 1500);
 		},
 
-		/**
-		 * Send message
-		 */
 		sendMessage: function() {
 			const input = document.getElementById(this.config.inputId);
-			const message = input ? input.value.trim() : '';
+			const msg = input.value.trim();
+			if (!msg || this.state.isLoading) return;
 
-			if (!message || this.state.isLoading) {
-				return;
-			}
-
-			// Add user message to UI
-			this.addMessage(message, 'user');
-
-			// Clear input
-			if (input) {
-				input.value = '';
-				input.focus();
-			}
-
-			// Send to server
-			this.sendToServer(message);
-		},
-
-		/**
-		 * Send message to server via AJAX
-		 */
-		sendToServer: function(message) {
-			if (typeof chatbotAIEngine === 'undefined' || !chatbotAIEngine.ajaxUrl || !chatbotAIEngine.nonce) {
-				this.addMessage(chatbotAIEngine.i18n.error, 'error');
-				return;
-			}
-
+			this.addMessage(msg, 'user');
+			input.value = '';
 			this.state.isLoading = true;
-			this.showLoadingIndicator();
+			this.showLoading();
 
 			const formData = new FormData();
 			formData.append('action', 'chatbot_send_message');
-			formData.append('message', message);
+			formData.append('message', msg);
 			formData.append('nonce', chatbotAIEngine.nonce);
 
-			fetch(chatbotAIEngine.ajaxUrl, {
-				method: 'POST',
-				body: formData,
-			})
-			.then(response => response.json())
-			.then(data => {
-				this.removeLoadingIndicator();
-				this.state.isLoading = false;
-
-				if (data.success && data.data.message) {
-					this.addMessage(data.data.message, 'bot');
-				} else {
-					const errorMsg = data.data ? data.data.message : chatbotAIEngine.i18n.error;
-					this.addMessage(errorMsg, 'error');
-				}
-			})
-			.catch(error => {
-				console.error('Chatbot AI Engine Error:', error);
-				this.removeLoadingIndicator();
-				this.state.isLoading = false;
-				this.addMessage(chatbotAIEngine.i18n.error, 'error');
-			});
+			fetch(chatbotAIEngine.ajaxUrl, { method: 'POST', body: formData })
+				.then(r => r.json())
+				.then(d => {
+					this.removeLoading();
+					this.state.isLoading = false;
+					if (d.success) this.addMessage(d.data.message, 'bot');
+					else this.addMessage(chatbotAIEngine.i18n.error, 'error');
+				})
+				.catch(() => {
+					this.removeLoading();
+					this.state.isLoading = false;
+					this.addMessage(chatbotAIEngine.i18n.error, 'error');
+				});
 		},
 
-		/**
-		 * Add message to chat
-		 */
 		addMessage: function(text, sender) {
-			const messagesContainer = document.getElementById(this.config.messagesId);
+			const container = document.getElementById(this.config.messagesId);
+			if (!container) return;
 
-			if (!messagesContainer) {
-				return;
-			}
-
-			const messageDiv = document.createElement('div');
-			messageDiv.className = `chatbot-ai-engine-message chatbot-ai-engine-message-${sender}`;
-			messageDiv.setAttribute('role', 'article');
-
+			const div = document.createElement('div');
+			div.className = `chatbot-ai-engine-message chatbot-ai-engine-message-${sender}`;
+			
 			const bubble = document.createElement('div');
 			bubble.className = 'chatbot-ai-engine-message-bubble';
-			bubble.innerHTML = this.escapeHtml(text);
+			
+			if (sender === 'user') bubble.textContent = text;
+			else bubble.innerHTML = text;
 
-			messageDiv.appendChild(bubble);
-			messagesContainer.appendChild(messageDiv);
+			div.appendChild(bubble);
+			container.appendChild(div);
+			container.scrollTop = container.scrollHeight;
 
-			// Scroll to bottom
-			this.scrollToBottom();
-
-			// Save to state
-			this.state.messages.push({
-				text: text,
-				sender: sender,
-				timestamp: new Date().getTime(),
-			});
-
-			this.saveMessages();
-		},
-
-		/**
-		 * Show loading indicator
-		 */
-		showLoadingIndicator: function() {
-			const messagesContainer = document.getElementById(this.config.messagesId);
-
-			if (!messagesContainer) {
-				return;
-			}
-
-			const loadingDiv = document.createElement('div');
-			loadingDiv.id = 'chatbot-ai-engine-loading';
-			loadingDiv.className = 'chatbot-ai-engine-message chatbot-ai-engine-message-bot';
-
-			const bubble = document.createElement('div');
-			bubble.className = 'chatbot-ai-engine-message-bubble chatbot-ai-engine-loading-bubble';
-			bubble.innerHTML = '<span></span><span></span><span></span>';
-
-			loadingDiv.appendChild(bubble);
-			messagesContainer.appendChild(loadingDiv);
-
-			this.scrollToBottom();
-		},
-
-		/**
-		 * Remove loading indicator
-		 */
-		removeLoadingIndicator: function() {
-			const loading = document.getElementById('chatbot-ai-engine-loading');
-
-			if (loading) {
-				loading.remove();
+			if (sender !== 'error') {
+				this.state.messages.push({ text, sender });
+				this.saveMessages();
 			}
 		},
 
-		/**
-		 * Scroll to bottom of messages
-		 */
-		scrollToBottom: function() {
-			const messagesContainer = document.getElementById(this.config.messagesId);
-
-			if (messagesContainer) {
-				setTimeout(() => {
-					messagesContainer.scrollTop = messagesContainer.scrollHeight;
-				}, 0);
-			}
+		showLoading: function() {
+			const container = document.getElementById(this.config.messagesId);
+			const div = document.createElement('div');
+			div.id = 'chatbot-ai-engine-loading';
+			div.className = 'chatbot-ai-engine-message chatbot-ai-engine-message-bot';
+			div.innerHTML = '<div class="chatbot-ai-engine-message-bubble chatbot-ai-engine-loading-bubble"><span></span><span></span><span></span></div>';
+			container.appendChild(div);
+			container.scrollTop = container.scrollHeight;
 		},
 
-		/**
-		 * Save messages to localStorage
-		 */
+		removeLoading: function() {
+			const el = document.getElementById('chatbot-ai-engine-loading');
+			if (el) el.remove();
+		},
+
 		saveMessages: function() {
-			try {
-				const sessionId = this.getSessionId();
-				localStorage.setItem(
-					`chatbot-ai-engine-messages-${sessionId}`,
-					JSON.stringify(this.state.messages)
-				);
-			} catch (e) {
-				console.warn('Could not save messages to localStorage', e);
-			}
-		},
-
-		/**
-		 * Load messages from localStorage
-		 */
-		loadMessages: function() {
-			try {
-				const sessionId = this.getSessionId();
-				const saved = localStorage.getItem(`chatbot-ai-engine-messages-${sessionId}`);
-
-				if (saved) {
-					this.state.messages = JSON.parse(saved);
-
-					// Display saved messages (only show last 10 to avoid clutter)
-					const messagesToShow = this.state.messages.slice(-10);
-					messagesToShow.forEach(msg => {
-						this.addMessage(msg.text, msg.sender);
-					});
-				}
-			} catch (e) {
-				console.warn('Could not load messages from localStorage', e);
-			}
-		},
-
-		/**
-		 * Get session ID
-		 */
-		getSessionId: function() {
-			const key = 'chatbot-ai-engine-session-id';
-
-			let sessionId = sessionStorage.getItem(key);
-
-			if (!sessionId) {
-				sessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-				sessionStorage.setItem(key, sessionId);
-			}
-
-			return sessionId;
-		},
-
-		/**
-		 * Escape HTML to prevent XSS
-		 */
-		escapeHtml: function(text) {
-			const map = {
-				'&': '&amp;',
-				'<': '&lt;',
-				'>': '&gt;',
-				'"': '&quot;',
-				"'": '&#039;',
-			};
-
-			return text.replace(/[&<>"']/g, m => map[m]);
-		},
+			const sessionId = sessionStorage.getItem('chatbot-ai-engine-session-id');
+			localStorage.setItem(`chatbot-ai-engine-messages-${sessionId}`, JSON.stringify(this.state.messages));
+		}
 	};
 
-	/**
-	 * Initialize when DOM is ready
-	 */
-	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', () => {
-			ChatbotAIEngine.init();
-		});
-	} else {
-		ChatbotAIEngine.init();
-	}
+	document.addEventListener('DOMContentLoaded', () => ChatbotAIEngine.init());
 })();
