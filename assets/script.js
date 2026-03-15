@@ -22,7 +22,6 @@
 			if (typeof chatbotAIEngine === 'undefined') return;
 			this.createDOM();
 			this.bindEvents();
-			// We no longer load old messages to start fresh every time as requested
 		},
 
 		createDOM: function() {
@@ -81,6 +80,11 @@
 			document.getElementById(this.config.windowId).style.display = 'flex';
 			this.state.isOpen = true;
 			document.getElementById(this.config.inputId).focus();
+
+			// Auto-greeting if empty
+			if (this.state.messages.length === 0 && !this.state.isLoading) {
+				this.sendGreeting();
+			}
 		},
 
 		closeAndClear: function() {
@@ -96,16 +100,45 @@
 				this.state.messages = [];
 				this.state.isOpen = false;
 				
-				// Clear storage
+				// Clear local storage
 				const sessionId = sessionStorage.getItem('chatbot-ai-engine-session-id');
 				localStorage.removeItem(`chatbot-ai-engine-messages-${sessionId}`);
 			}, 1500);
+		},
+
+		sendGreeting: function() {
+			this.state.isLoading = true;
+			this.showLoading();
+
+			const formData = new FormData();
+			formData.append('action', 'chatbot_send_message');
+			formData.append('message', 'INIT_GREETING'); // Hidden trigger
+			formData.append('history', JSON.stringify([]));
+			formData.append('nonce', chatbotAIEngine.nonce);
+
+			fetch(chatbotAIEngine.ajaxUrl, { method: 'POST', body: formData })
+				.then(r => r.json())
+				.then(d => {
+					this.removeLoading();
+					this.state.isLoading = false;
+					if (d.success) this.addMessage(d.data.message, 'bot');
+				})
+				.catch(() => {
+					this.removeLoading();
+					this.state.isLoading = false;
+				});
 		},
 
 		sendMessage: function() {
 			const input = document.getElementById(this.config.inputId);
 			const msg = input.value.trim();
 			if (!msg || this.state.isLoading) return;
+
+			// Prepare history (last 6 messages)
+			const history = this.state.messages.slice(-6).map(m => ({
+				role: m.sender === 'user' ? 'user' : 'assistant',
+				content: m.text.replace(/<[^>]*>?/gm, '') // Strip HTML
+			}));
 
 			this.addMessage(msg, 'user');
 			input.value = '';
@@ -115,6 +148,7 @@
 			const formData = new FormData();
 			formData.append('action', 'chatbot_send_message');
 			formData.append('message', msg);
+			formData.append('history', JSON.stringify(history));
 			formData.append('nonce', chatbotAIEngine.nonce);
 
 			fetch(chatbotAIEngine.ajaxUrl, { method: 'POST', body: formData })

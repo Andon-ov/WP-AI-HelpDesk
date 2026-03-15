@@ -212,18 +212,35 @@ class Chatbot_AI_Engine {
 	}
 
 	public function handle_ajax_message() {
+		$s = get_option( 'chatbot_ai_engine_settings', array() );
+		if ( '1' !== ($s['enabled'] ?? '0') ) return;
+
 		check_ajax_referer( 'chatbot_ai_engine_nonce', 'nonce' );
 		$msg = sanitize_text_field( $_POST['message'] ?? '' );
 		if ( empty($msg) ) wp_send_json_error( array('message' => 'Empty') );
 		
-		$settings = get_option( 'chatbot_ai_engine_settings', array() );
-		$prompt = $settings['system_prompt'] ?? '';
-		$prompt = str_replace( array('{site_url}', '{site_name}'), array(get_site_url(), get_bloginfo('name')), $prompt );
+		$history = json_decode( stripslashes( $_POST['history'] ?? '[]' ), true );
 		
-		$context = $this->get_site_context( $msg );
-		if ( ! empty($context) ) $prompt .= $context;
+		$current_user = wp_get_current_user();
+		$user_name = is_user_logged_in() ? $current_user->display_name : '';
 
-		$response = $this->call_ai_api( $msg, $prompt, $settings );
+		$settings = $s;
+		$prompt = $settings['system_prompt'] ?? '';
+		$prompt = str_replace( 
+			array('{site_url}', '{site_name}', '{user_name}'), 
+			array(get_site_url(), get_bloginfo('name'), $user_name), 
+			$prompt 
+		);
+		
+		// If it's just a greeting trigger, we don't need context search
+		if ( $msg === 'INIT_GREETING' ) {
+			$response = $this->call_ai_api( "Моля, поздрави ме професионално.", $prompt, $settings, $history );
+		} else {
+			$context = $this->get_site_context( $msg );
+			if ( ! empty($context) ) $prompt .= $context;
+			$response = $this->call_ai_api( $msg, $prompt, $settings, $history );
+		}
+
 		if ( is_wp_error($response) ) wp_send_json_error( array('message' => $response->get_error_message()) );
 		wp_send_json_success( array('message' => $response) );
 	}
@@ -231,16 +248,31 @@ class Chatbot_AI_Engine {
 	private function get_site_context( $msg ) {
 		$file = wp_upload_dir()['basedir'] . '/chatbot-ai-knowledge.json';
 		$index = file_exists($file) ? json_decode( file_get_contents($file), true ) : array();
-		$keywords = array_filter( explode( ' ', mb_strtolower( preg_replace( '/[[:punct:]]/u', ' ', $msg ) ) ), fn($w) => mb_strlen(trim($w)) > 2 );
+		
+		$raw_keywords = array_filter( explode( ' ', mb_strtolower( preg_replace( '/[[:punct:]]/u', ' ', $msg ) ) ), fn($w) => mb_strlen(trim($w)) > 2 );
+		
+		$normalized = array();
+		foreach ( $raw_keywords as $kw ) {
+			$normalized[] = $kw;
+			$stem = preg_replace('/(ата|ето|ите|та|те|ия|то|а|е|и|я)$/u', '', $kw);
+			if ( mb_strlen($stem) > 3 ) $normalized[] = $stem;
+		}
+		$keywords = array_unique($normalized);
 		
 		$matches = array();
 		if ( ! empty($index) && ! empty($keywords) ) {
 			foreach ( $index as $item ) {
-				$score = 0; $title = mb_strtolower($item['title']); $content = mb_strtolower($item['content']); $hits = 0;
+				$score = 0; 
+				$title = mb_strtolower($item['title']); 
+				$content = mb_strtolower($item['content']); 
+				$tags = mb_strtolower($item['tags'] ?? '');
+				$hits = 0;
+
 				foreach ( $keywords as $kw ) {
 					$found = false;
-					if ( mb_strpos($title, $kw) !== false ) { $score += 50; $found = true; } // Massive boost for title
+					if ( mb_strpos($title, $kw) !== false ) { $score += 50; $found = true; } 
 					if ( mb_strpos($content, $kw) !== false ) { $score += 15; $found = true; }
+					if ( !empty($tags) && mb_strpos($tags, $kw) !== false ) { $score += 30; $found = true; }
 					if ($found) $hits++;
 				}
 				if ($hits > 1) $score *= $hits;
@@ -251,18 +283,20 @@ class Chatbot_AI_Engine {
 		usort( $matches, fn($a, $b) => $b['score'] - $a['score'] );
 		$top = array_slice( $matches, 0, 5 );
 		
-		// DB Fallback
 		if ( empty($top) ) {
 			$query = new WP_Query( array( 'post_type' => array('post', 'page', 'product', 'wprm_recipe', 'glossary'), 'post_status' => 'publish', 's' => $msg, 'posts_per_page' => 3 ) );
 			if ( $query->have_posts() ) {
-				foreach ( $query->posts as $p ) $top[] = array('name' => $p->post_title, 'info' => mb_substr(wp_strip_all_tags($p->post_content), 0, 500), 'link' => get_permalink($p->ID));
+				foreach ( $query->posts as $p ) {
+					$clean_content = mb_substr( wp_strip_all_tags( strip_shortcodes( $p->post_content ) ), 0, 500 );
+					$top[] = array('name' => $p->post_title, 'info' => $clean_content, 'link' => get_permalink($p->ID));
+				}
 			}
 			wp_reset_postdata();
 		} else {
 			$top = array_column($top, 'data');
 		}
 
-		if ( empty($top) ) return "\n\n### NO DATA FOUND. Guide the user to {site_url}/рецепти/.";
+		if ( empty($top) ) return "\n\n### NO DATA FOUND. Guide the user to " . get_site_url() . "/рецепти/.";
 
 		$ctx = "\n\n### DATASET (FACTS FROM SITE):\n" . wp_json_encode($top, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
 		$ctx .= "\nSTRICT RULES: 1. Use ONLY names and links from DATASET. 2. NEVER invent links. 3. Answer in natural Bulgarian.";
@@ -299,21 +333,32 @@ class Chatbot_AI_Engine {
 						wp_reset_postdata();
 					}
 					if ( empty($cost) ) $cost = get_post_meta($id, '_ticket_price', true);
-					$text = "DATE: ".get_post_meta($id, '_EventStartDate', true)." | PRICE: ".($cost ? $cost . " лв." : "Check Academy")." | INFO: ".$p->post_content;
+					$text = "DATE: ".get_post_meta($id, '_EventStartDate', true)." | PRICE: ".($cost ? $cost . " EUR" : "Check Academy")." | INFO: ".$p->post_content;
+				} elseif ('product' === $type && function_exists('wc_get_product')) {
+					$product = wc_get_product($id);
+					$price = $product ? $product->get_price() . ' EUR' : '';
+					$text = "ЦЕНА: {$price} | " . $p->post_content;
 				} elseif ('glossary' === $type) {
 					$text = "DEFINITION: " . $p->post_content;
 				} else {
 					$text = $p->post_content;
 				}
 				$clean = wp_strip_all_tags(strip_shortcodes($text));
-				$data[] = array('id' => $id, 'title' => get_the_title($id), 'type' => $type, 'content' => mb_substr(preg_replace('/\s+/', ' ', $clean), 0, 1000), 'url' => get_permalink($id));
+				$data[] = array(
+					'id' => $id, 
+					'title' => get_the_title($id), 
+					'type' => $type, 
+					'content' => mb_substr(preg_replace('/\s+/', ' ', $clean), 0, 500), 
+					'url' => get_permalink($id),
+					'tags' => ($type === 'product' ? 'курс обучение лекция закупи купи цена' : '')
+				);
 			}
 		}
 
 		foreach ( array('product_cat', 'category', 'wprm_course') as $tax ) {
 			if ( taxonomy_exists($tax) ) {
 				$terms = get_terms( array( 'taxonomy' => $tax, 'hide_empty' => true ) );
-				if ( ! is_wp_error($terms) ) foreach ( $terms as $t ) $data[] = array('id' => 't_'.$t->term_id, 'title' => $t->name, 'type' => 'category', 'content' => "Browse items in $t->name", 'url' => get_term_link($t));
+				if ( ! is_wp_error($terms) ) foreach ( $terms as $t ) $data[] = array('id' => 't_'.$t->term_id, 'title' => $t->name, 'type' => 'category', 'content' => "Browse items in $t->name", 'url' => get_term_link($t), 'tags' => '');
 			}
 		}
 
@@ -322,9 +367,16 @@ class Chatbot_AI_Engine {
 		return count($data);
 	}
 
-	private function call_ai_api( $msg, $prompt, $settings ) {
-		$key = $this->get_decrypted_api_key();
-		$body = array( 'model' => $settings['model'], 'temperature' => floatval($settings['temperature']), 'messages' => array( array('role' => 'system', 'content' => $prompt), array('role' => 'user', 'content' => $msg) ) );
+	private function call_ai_api( $msg, $prompt, $settings, $history = array() ) {
+		$key = $this->get_decrypted_api_key( $settings );
+		
+		$messages = array( array('role' => 'system', 'content' => $prompt) );
+		if ( ! empty($history) && is_array($history) ) {
+			foreach ( $history as $h ) $messages[] = array('role' => $h['role'], 'content' => $h['content']);
+		}
+		$messages[] = array('role' => 'user', 'content' => $msg);
+
+		$body = array( 'model' => $settings['model'], 'temperature' => floatval($settings['temperature']), 'messages' => $messages );
 		$response = wp_remote_post( $settings['api_url'], array( 'headers' => array( 'Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json' ), 'body' => wp_json_encode($body), 'timeout' => 30 ) );
 		if ( is_wp_error($response) ) return $response;
 		$data = json_decode( wp_remote_retrieve_body($response), true );
@@ -344,9 +396,9 @@ class Chatbot_AI_Engine {
 		return $res !== false ? $res : $e;
 	}
 	private function get_encryption_key() { return function_exists('wp_salt') ? wp_salt('auth') : (defined('AUTH_KEY') ? AUTH_KEY : 'salt'); }
-	public function get_decrypted_api_key() {
-		$s = get_option( 'chatbot_ai_engine_settings', array() );
-		return $this->decrypt_api_key( $s['api_key'] ?? '' );
+	public function get_decrypted_api_key( $settings = array() ) {
+		if ( empty($settings) ) $settings = get_option( 'chatbot_ai_engine_settings', array() );
+		return $this->decrypt_api_key( $settings['api_key'] ?? '' );
 	}
 }
 
