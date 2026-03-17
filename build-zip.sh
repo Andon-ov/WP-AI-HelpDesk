@@ -2,7 +2,7 @@
 
 # Името на плъгина и версията
 PLUGIN_NAME="chatbot-ai-engine"
-VERSION="v1.1.9"
+VERSION="v1.2.0"
 ZIP_NAME="${PLUGIN_NAME}-${VERSION}.zip"
 
 echo "🚀 Започвам създаването на ПРОФЕСИОНАЛЕН архив ${ZIP_NAME}..."

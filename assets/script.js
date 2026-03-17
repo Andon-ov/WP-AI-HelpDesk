@@ -14,6 +14,7 @@
 			inputId: 'chatbot-ai-engine-input',
 			sendBtnId: 'chatbot-ai-engine-send-btn',
 			closeBtnId: 'chatbot-ai-engine-close-btn',
+			clearBtnId: 'chatbot-ai-engine-clear-btn',
 		},
 
 		state: { isOpen: false, isLoading: false, messages: [] },
@@ -27,6 +28,20 @@
 			}
 
 			this.createDOM();
+			this.loadMessages();
+			
+			// Auto-greeting if empty AND not already greeted in this session
+			const sessionId = sessionStorage.getItem('chatbot-ai-engine-session-id');
+			const hasGreeted = sessionStorage.getItem(`chatbot-greeted-${sessionId}`);
+
+			if (this.state.messages.length === 0 && !hasGreeted) {
+				const welcome = (chatbotAIEngine.i18n && chatbotAIEngine.i18n.welcomeMessage) 
+					? chatbotAIEngine.i18n.welcomeMessage 
+					: 'Здравейте! С какво мога да ви помогна днес?';
+				this.addMessage(welcome, 'bot');
+				sessionStorage.setItem(`chatbot-greeted-${sessionId}`, 'true');
+			}
+
 			this.bindEvents();
 		},
 
@@ -45,7 +60,7 @@
 			bubble.className = 'chatbot-ai-engine-bubble';
 			bubble.setAttribute('role', 'button');
 			bubble.setAttribute('tabindex', '0');
-			bubble.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
+			bubble.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
 
 			const chatWindow = document.createElement('div');
 			chatWindow.id = this.config.windowId;
@@ -53,8 +68,15 @@
 			chatWindow.style.display = 'none';
 			chatWindow.innerHTML = `
 				<div class="chatbot-ai-engine-header">
-					<h3>${chatbotAIEngine.i18n.chatTitle}</h3>
-					<button id="${this.config.closeBtnId}" class="chatbot-ai-engine-close">&times;</button>
+					<div class="chatbot-ai-engine-header-title">
+						<h3>${chatbotAIEngine.i18n.chatTitle}</h3>
+					</div>
+					<div class="chatbot-ai-engine-header-actions">
+						<button id="${this.config.clearBtnId}" class="chatbot-ai-engine-clear-history" title="Изчисти историята">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+						</button>
+						<button id="${this.config.closeBtnId}" class="chatbot-ai-engine-close">&times;</button>
+					</div>
 				</div>
 				<div id="${this.config.messagesId}" class="chatbot-ai-engine-messages"></div>
 				<div class="chatbot-ai-engine-input-wrapper">
@@ -73,71 +95,64 @@
 		bindEvents: function() {
 			const bubble = document.getElementById(this.config.bubbleId);
 			const closeBtn = document.getElementById(this.config.closeBtnId);
+			const clearBtn = document.getElementById(this.config.clearBtnId);
 			const sendBtn = document.getElementById(this.config.sendBtnId);
 			const input = document.getElementById(this.config.inputId);
 
 			if (bubble) bubble.addEventListener('click', () => this.toggleWindow());
-			if (closeBtn) closeBtn.addEventListener('click', () => this.closeAndClear());
+			if (closeBtn) closeBtn.addEventListener('click', () => this.toggleWindow());
+			if (clearBtn) clearBtn.addEventListener('click', () => this.clearHistory());
 			if (sendBtn) sendBtn.addEventListener('click', () => this.sendMessage());
 			if (input) input.addEventListener('keypress', (e) => { if (e.key === 'Enter') this.sendMessage(); });
 		},
 
-		toggleWindow: function() {
-			if (this.state.isOpen) this.closeAndClear();
-			else this.openWindow();
-		},
+		loadMessages: function() {
+			const sessionId = sessionStorage.getItem('chatbot-ai-engine-session-id');
+			if (!sessionId) return;
 
-		openWindow: function() {
-			document.getElementById(this.config.windowId).style.display = 'flex';
-			this.state.isOpen = true;
-			document.getElementById(this.config.inputId).focus();
-
-			// Auto-greeting on first open
-			if (this.state.messages.length === 0 && !this.state.isLoading) {
-				this.sendGreeting();
+			const stored = localStorage.getItem(`chatbot-ai-engine-messages-${sessionId}`);
+			if (stored) {
+				try {
+					const messages = JSON.parse(stored);
+					if (Array.isArray(messages) && messages.length > 0) {
+						messages.forEach(m => this.renderMessage(m.text, m.sender, false));
+						this.state.messages = messages;
+					}
+				} catch (e) {
+					console.error('Chatbot: Failed to load history', e);
+				}
 			}
 		},
 
-		closeAndClear: function() {
-			if (!this.state.isOpen) return;
-			
-			// Show goodbye message
-			this.addMessage(chatbotAIEngine.i18n.goodbye, 'bot');
-			
-			// Wait a bit then close and clear
-			setTimeout(() => {
-				document.getElementById(this.config.windowId).style.display = 'none';
-				document.getElementById(this.config.messagesId).innerHTML = '';
-				this.state.messages = [];
+		toggleWindow: function() {
+			const win = document.getElementById(this.config.windowId);
+			if (this.state.isOpen) {
+				win.style.display = 'none';
 				this.state.isOpen = false;
+			} else {
+				win.style.display = 'flex';
+				this.state.isOpen = true;
+				document.getElementById(this.config.inputId).focus();
 				
-				// Clear storage
-				const sessionId = sessionStorage.getItem('chatbot-ai-engine-session-id');
-				localStorage.removeItem(`chatbot-ai-engine-messages-${sessionId}`);
-			}, 1500);
+				// Scroll to bottom
+				const container = document.getElementById(this.config.messagesId);
+				container.scrollTop = container.scrollHeight;
+			}
 		},
 
-		sendGreeting: function() {
-			this.state.isLoading = true;
-			this.showLoading();
-
-			const formData = new FormData();
-			formData.append('action', 'chatbot_send_message');
-			formData.append('message', 'INIT_GREETING');
-			formData.append('history', JSON.stringify([]));
-			formData.append('nonce', chatbotAIEngine.nonce);
-
-			fetch(chatbotAIEngine.ajaxUrl, { method: 'POST', body: formData })
-				.then(r => r.json())
-				.then(d => {
-					this.removeLoading();
-					this.state.isLoading = false;
-					if (d.success) this.addMessage(d.data.message, 'bot');
-				})
-				.catch(() => {
-					this.removeLoading();
-					this.state.isLoading = false;
-				});
+		clearHistory: function() {
+			if (confirm('Сигурни ли сте, че искате да изчистите историята на чата?')) {
+				const sessionId = sessionStorage.getItem('chatbot-ai-engine-session-id');
+				localStorage.removeItem(`chatbot-ai-engine-messages-${sessionId}`);
+				document.getElementById(this.config.messagesId).innerHTML = '';
+				this.state.messages = [];
+				
+				// Show greeting again
+				const welcome = (chatbotAIEngine.i18n && chatbotAIEngine.i18n.welcomeMessage) 
+					? chatbotAIEngine.i18n.welcomeMessage 
+					: 'Здравейте! С какво мога да ви помогна днес?';
+				this.addMessage(welcome, 'bot');
+			}
 		},
 
 		sendMessage: function() {
@@ -177,6 +192,10 @@
 		},
 
 		addMessage: function(text, sender) {
+			this.renderMessage(text, sender, true);
+		},
+
+		renderMessage: function(text, sender, shouldSave = true) {
 			const container = document.getElementById(this.config.messagesId);
 			if (!container) return;
 
@@ -193,7 +212,7 @@
 			container.appendChild(div);
 			container.scrollTop = container.scrollHeight;
 
-			if (sender !== 'error' && sender !== 'loading') {
+			if (shouldSave && sender !== 'error' && sender !== 'loading') {
 				this.state.messages.push({ text, sender });
 				this.saveMessages();
 			}

@@ -3,7 +3,7 @@
  * Plugin Name: Chatbot AI Engine
  * Plugin URI: https://github.com/Andon-ov/WP-AI-HelpDesk
  * Description: Specialized AI Chatbot for Chef & Gastro. Supports Groq, OpenAI, Anthropic and Gemini.
- * Version: 1.1.9
+ * Version: 1.2.0
  * Author: Andon-ov
  * Author URI: https://github.com/Andon-ov
  * License: GPL v2 or later
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'CHATBOT_AI_ENGINE_VERSION', '1.1.9' );
+define( 'CHATBOT_AI_ENGINE_VERSION', defined('WP_DEBUG') && WP_DEBUG ? time() : '1.2.0' );
 define( 'CHATBOT_AI_ENGINE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'CHATBOT_AI_ENGINE_URL', plugin_dir_url( __FILE__ ) );
 define( 'CHATBOT_AI_ENGINE_BASENAME', plugin_basename( __FILE__ ) );
@@ -53,10 +53,11 @@ class Chatbot_AI_Engine {
 		add_action( 'wp_ajax_chatbot_send_message', array( $this, 'handle_ajax_message' ) );
 		add_action( 'wp_ajax_nopriv_chatbot_send_message', array( $this, 'handle_ajax_message' ) );
 		add_action( 'wp_ajax_chatbot_sync_knowledge', array( $this, 'handle_sync_knowledge' ) );
+		add_shortcode( 'chatbot', array( $this, 'render_shortcode' ) );
 	}
 
 	public function activate() {
-		log_chatbot_ai_engine( 'Chef & Gastro Academy Chatbot v1.1.9 activating...' );
+		log_chatbot_ai_engine( 'Chef & Gastro Academy Chatbot v1.2.0 activating...' );
 		if ( ! get_option( 'chatbot_ai_engine_settings' ) ) {
 			$default_settings = array(
 				'enabled'      => '0',
@@ -64,19 +65,16 @@ class Chatbot_AI_Engine {
 				'api_provider' => 'groq',
 				'api_url'      => 'https://api.groq.com/openai/v1/chat/completions',
 				'model'        => 'llama-3.3-70b-versatile',
+				'welcome_message' => 'Здравейте{user_name}! С какво мога да ви помогна днес?',
 				'system_prompt' => "Ти си официалният AI асистент на {site_name}. 
 
-ПОЗДРАВ:
-- Ако {user_name} не е празно, започни със: 'Здравейте, {user_name}! Радвам се да ви видя.'
-- Ако {user_name} е празно, започни със: 'Здравейте! Вие се намирате в {site_name} – мястото за професионално кулинарно развитие.'
-
 ПРАВИЛА:
-1. ПЪРВО ПРОВЕРИ DATASET: Използвай САМО информацията от предоставените данни за конкретни рецепти и курсове.
-2. ЦЕНИ: Винаги казвай цената на курса (в EUR), ако я има в DATASET.
-3. ЛИНКОВЕ: Винаги давай пълни Markdown линкове: [Заглавие](URL).
-4. ОТГОВОР: Бъди професионален кулинарен инструктор. Отговаряй на български.",
+1. ПРИОРИТЕТ: Винаги проверявай секцията ИНФОРМАЦИЯ ОТ САЙТА. Ако там има данни за рецепти, курсове или цени, използвай ГИ ПЪРВО.
+2. ЛИНКОВЕ: Винаги давай пълни линкове от данните във формат [Заглавие](URL).
+3. ПРИ ОТСЪСТВИЕ НА ДАННИ: Ако в секцията няма информация за конкретния въпрос, използвай общите си кулинарни познания, за да помогнеш, но насочи потребителя към сайта.
+4. ТОН: Бъди професионален кулинарен експерт. Отговаряй на български.",
 				'position'     => 'bottom-right',
-				'temperature'  => 0.2
+				'temperature'  => 0.5
 			);
 			update_option( 'chatbot_ai_engine_settings', $default_settings );
 		}
@@ -112,15 +110,13 @@ class Chatbot_AI_Engine {
 			$existing = get_option( 'chatbot_ai_engine_settings', array() );
 			$sanitized['api_key'] = $existing['api_key'] ?? '';
 		}
-		$allowed_providers = array( 'openai', 'groq', 'anthropic', 'gemini', 'custom' );
-		$sanitized['api_provider'] = in_array( $settings['api_provider'], $allowed_providers ) ? $settings['api_provider'] : 'openai';
+		$sanitized['api_provider'] = sanitize_text_field( $settings['api_provider'] ?? 'openai' );
 		$sanitized['api_url'] = esc_url_raw( $settings['api_url'] ?? '' );
 		$sanitized['model'] = sanitize_text_field( $settings['model'] ?? '' );
+		$sanitized['welcome_message'] = sanitize_text_field( $settings['welcome_message'] ?? '' );
 		$sanitized['system_prompt'] = sanitize_textarea_field( $settings['system_prompt'] ?? '' );
 		$sanitized['position'] = sanitize_text_field( $settings['position'] ?? 'bottom-right' );
-		$sanitized['max_tokens'] = absint( $settings['max_tokens'] ?? 1000 );
 		$temperature = floatval( $settings['temperature'] ?? 0.7 );
-		if ( 'groq' === $sanitized['api_provider'] && $temperature > 0.5 ) $temperature = 0.3;
 		$sanitized['temperature'] = min( 2.0, max( 0.0, $temperature ) );
 		return apply_filters( 'chatbot_ai_engine_settings', $sanitized );
 	}
@@ -158,31 +154,35 @@ class Chatbot_AI_Engine {
 
 	public function render_settings_page() {
 		if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Denied' );
-		$settings = get_option( 'chatbot_ai_engine_settings', array() );
+		$s = get_option( 'chatbot_ai_engine_settings', array() );
 		?>
 		<div class="wrap">
 			<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
 			<form method="post" action="options.php">
 				<?php settings_fields( 'chatbot_ai_engine_settings_group' ); ?>
 				<table class="form-table">
-					<tr><th>Enable Chatbot</th><td><input type="checkbox" name="chatbot_ai_engine_settings[enabled]" value="1" <?php checked( $settings['enabled'] ?? 0, 1 ); ?> /></td></tr>
+					<tr><th>Enable Chatbot</th><td><input type="checkbox" name="chatbot_ai_engine_settings[enabled]" value="1" <?php checked( $s['enabled'] ?? 0, 1 ); ?> /></td></tr>
 					<tr><th>AI Provider</th><td>
 						<select name="chatbot_ai_engine_settings[api_provider]" onchange="updateApiUrl(this.value)">
-							<option value="openai" <?php selected($settings['api_provider'] ?? '', 'openai'); ?>>OpenAI</option>
-							<option value="groq" <?php selected($settings['api_provider'] ?? '', 'groq'); ?>>Groq</option>
-							<option value="anthropic" <?php selected($settings['api_provider'] ?? '', 'anthropic'); ?>>Anthropic</option>
-							<option value="gemini" <?php selected($settings['api_provider'] ?? '', 'gemini'); ?>>Gemini</option>
+							<option value="openai" <?php selected($s['api_provider'] ?? '', 'openai'); ?>>OpenAI</option>
+							<option value="groq" <?php selected($s['api_provider'] ?? '', 'groq'); ?>>Groq</option>
+							<option value="anthropic" <?php selected($s['api_provider'] ?? '', 'anthropic'); ?>>Anthropic</option>
+							<option value="gemini" <?php selected($s['api_provider'] ?? '', 'gemini'); ?>>Gemini</option>
 						</select>
 					</td></tr>
-					<tr><th>API URL</th><td><input type="url" id="chatbot_api_url" name="chatbot_ai_engine_settings[api_url]" value="<?php echo esc_url( $settings['api_url'] ?? '' ); ?>" class="regular-text" /></td></tr>
-					<tr><th>API Key</th><td><input type="password" name="chatbot_ai_engine_settings[api_key]" value="<?php echo ! empty( $settings['api_key'] ) ? '••••••••••••••••' : ''; ?>" class="regular-text" /></td></tr>
-					<tr><th>Model Name</th><td><input type="text" id="chatbot_model" name="chatbot_ai_engine_settings[model]" value="<?php echo esc_attr( $settings['model'] ?? '' ); ?>" class="regular-text" /></td></tr>
-					<tr><th>System Prompt</th><td><textarea name="chatbot_ai_engine_settings[system_prompt]" class="large-text" rows="10"><?php echo esc_textarea( $settings['system_prompt'] ?? '' ); ?></textarea></td></tr>
-					<tr><th>Temperature</th><td><input type="number" name="chatbot_ai_engine_settings[temperature]" value="<?php echo esc_attr( $settings['temperature'] ?? 0.7 ); ?>" min="0" max="2" step="0.1" /></td></tr>
+					<tr><th>API URL</th><td><input type="url" id="chatbot_api_url" name="chatbot_ai_engine_settings[api_url]" value="<?php echo esc_url( $s['api_url'] ?? '' ); ?>" class="regular-text" /></td></tr>
+					<tr><th>API Key</th><td><input type="password" name="chatbot_ai_engine_settings[api_key]" value="<?php echo ! empty( $s['api_key'] ) ? '••••••••••••••••' : ''; ?>" class="regular-text" /></td></tr>
+					<tr><th>Model Name</th><td><input type="text" id="chatbot_model" name="chatbot_ai_engine_settings[model]" value="<?php echo esc_attr( $s['model'] ?? '' ); ?>" class="regular-text" /></td></tr>
+					<tr><th>Welcome Message</th><td>
+						<input type="text" name="chatbot_ai_engine_settings[welcome_message]" value="<?php echo esc_attr( $s['welcome_message'] ?? '' ); ?>" class="regular-text" placeholder="Здравейте{user_name}!" />
+						<p class="description">Използвай <code>{user_name}</code> за име на потребителя.</p>
+					</td></tr>
+					<tr><th>System Prompt</th><td><textarea name="chatbot_ai_engine_settings[system_prompt]" class="large-text" rows="10"><?php echo esc_textarea( $s['system_prompt'] ?? '' ); ?></textarea></td></tr>
+					<tr><th>Temperature</th><td><input type="number" name="chatbot_ai_engine_settings[temperature]" value="<?php echo esc_attr( $s['temperature'] ?? 0.7 ); ?>" min="0" max="2" step="0.1" /></td></tr>
 					<tr><th>Position</th><td>
 						<select name="chatbot_ai_engine_settings[position]">
-							<option value="bottom-right" <?php selected($settings['position'] ?? '', 'bottom-right'); ?>>Bottom Right</option>
-							<option value="bottom-left" <?php selected($settings['position'] ?? '', 'bottom-left'); ?>>Bottom Left</option>
+							<option value="bottom-right" <?php selected($s['position'] ?? '', 'bottom-right'); ?>>Bottom Right</option>
+							<option value="bottom-left" <?php selected($s['position'] ?? '', 'bottom-left'); ?>>Bottom Left</option>
 						</select>
 					</td></tr>
 				</table>
@@ -204,6 +204,12 @@ class Chatbot_AI_Engine {
 	public function enqueue_frontend_assets() {
 		$s = get_option( 'chatbot_ai_engine_settings', array() );
 		if ( '1' !== ($s['enabled'] ?? '0') ) return;
+
+		$current_user = wp_get_current_user();
+		$user_name = is_user_logged_in() ? ' ' . $current_user->display_name : '';
+		$welcome = ! empty( $s['welcome_message'] ) ? $s['welcome_message'] : 'Здравейте{user_name}! С какво мога да помогна?';
+		$welcome = str_replace( '{user_name}', $user_name, $welcome );
+
 		wp_enqueue_style( 'chatbot-ai-style', CHATBOT_AI_ENGINE_URL . 'assets/style.css', array(), CHATBOT_AI_ENGINE_VERSION );
 		wp_enqueue_script( 'chatbot-ai-script', CHATBOT_AI_ENGINE_URL . 'assets/script.js', array(), CHATBOT_AI_ENGINE_VERSION, true );
 		wp_localize_script( 'chatbot-ai-script', 'chatbotAIEngine', array(
@@ -211,13 +217,20 @@ class Chatbot_AI_Engine {
 			'nonce' => wp_create_nonce( 'chatbot_ai_engine_nonce' ),
 			'position' => $s['position'] ?? 'bottom-right',
 			'isAdminBar' => is_admin_bar_showing(),
-			'i18n' => array( 'placeholder' => 'Пишете съобщение...', 'send' => 'Изпрати', 'loading' => '...', 'error' => 'Грешка', 'chatTitle' => 'Chef & Gastro Assistant', 'closeChat' => 'Затвори', 'goodbye' => 'Заповядайте отново! 👋' )
+			'i18n' => array( 
+				'placeholder' => 'Пишете съобщение...', 
+				'send' => 'Изпрати', 
+				'error' => 'Грешка', 
+				'chatTitle' => 'Chef & Gastro Assistant', 
+				'goodbye' => 'Заповядайте отново! 👋',
+				'welcomeMessage' => esc_js($welcome)
+			)
 		));
 	}
 
 	public function handle_ajax_message() {
 		$s = get_option( 'chatbot_ai_engine_settings', array() );
-		if ( '1' !== ($s['enabled'] ?? '0') ) return;
+		if ( '1' !== ($s['enabled'] ?? '0') ) { wp_send_json_error(['message' => 'Disabled']); return; }
 
 		check_ajax_referer( 'chatbot_ai_engine_nonce', 'nonce' );
 		$msg = sanitize_text_field( $_POST['message'] ?? '' );
@@ -239,16 +252,27 @@ class Chatbot_AI_Engine {
 		$prompt = $settings['system_prompt'] ?? '';
 		$prompt = str_replace( array('{site_url}', '{site_name}', '{user_name}'), array(get_site_url(), get_bloginfo('name'), $user_name), $prompt );
 		
-		if ( $msg === 'INIT_GREETING' ) {
-			$response = $this->call_ai_api( "Моля, поздрави ме професионално.", $prompt, $settings, $history );
+		$context = $this->get_site_context( $msg );
+		if ( ! empty($context) ) {
+			$prompt .= "\n\n### ИНФОРМАЦИЯ ОТ САЙТА (ИЗПОЛЗВАЙ ПРИОРИТЕТНО):\n" . $context;
 		} else {
-			$context = $this->get_site_context( $msg );
-			if ( ! empty($context) ) $prompt .= $context;
-			$response = $this->call_ai_api( $msg, $prompt, $settings, $history );
+			$prompt .= "\n\n### ВАЖНО: В момента няма специфични данни за този въпрос в сайта. Отговори любезно и насочи към главната страница: " . get_site_url();
 		}
+		
+		$response = $this->call_ai_api( $msg, $prompt, $settings, $history );
 
 		if ( is_wp_error($response) ) wp_send_json_error( array('message' => $response->get_error_message()) );
+
+		$this->log_conversation( $user_name ? $user_name : 'Guest', $msg, $response );
 		wp_send_json_success( array('message' => $response) );
+	}
+
+	private function log_conversation( $user, $msg, $response ) {
+		$upload_dir = wp_upload_dir();
+		$log_file = $upload_dir['basedir'] . '/chatbot-logs.csv';
+		$fp = fopen( $log_file, 'a' );
+		fputcsv( $fp, array( date( 'Y-m-d H:i:s' ), $user, $msg, mb_substr( wp_strip_all_tags( $response ), 0, 500 ) ) );
+		fclose( $fp );
 	}
 
 	private function get_site_context( $msg ) {
@@ -256,7 +280,9 @@ class Chatbot_AI_Engine {
 		$index = file_exists($file) ? json_decode( file_get_contents($file), true ) : array();
 		
 		$raw_keywords = array_filter( explode( ' ', mb_strtolower( preg_replace( '/[[:punct:]]/u', ' ', $msg ) ) ), fn($w) => mb_strlen(trim($w)) > 2 );
-		
+		$stop_words = array('със', 'във', 'през', 'под', 'над', 'зад', 'между', 'пред', 'върху', 'като', 'кога', 'къде', 'какво', 'защо', 'кой', 'коя', 'кое', 'кои', 'всички', 'всичко', 'няма', 'има', 'естествено', 'може', 'можеш', 'трябва', 'чрез', 'нас', 'вас', 'тях', 'колко', 'струва', 'дали', 'някой', 'нещо', 'някъде', 'никой', 'нито', 'само', 'още', 'вече', 'много', 'малко', 'повече', 'искам', 'търся', 'имате', 'имам', 'дай', 'покажи', 'кажи', 'опиши', 'препоръчай', 'предложи', 'намери', 'намерете', 'виж', 'вижте', 'знаеш', 'знаете', 'искате', 'търсите', 'тук', 'там', 'сега', 'после', 'преди', 'харесвам', 'харесвате', 'интересно', 'интересува', 'относно', 'защото', 'затова', 'понеже', 'обаче', 'обаче', 'също', 'значи', 'иначе', 'въпреки', 'докато', 'когато');
+		$raw_keywords = array_diff($raw_keywords, $stop_words);
+
 		$normalized = array();
 		foreach ( $raw_keywords as $kw ) {
 			$normalized[] = $kw;
@@ -285,11 +311,10 @@ class Chatbot_AI_Engine {
 		$top = array_slice( $matches, 0, 5 );
 		
 		if ( empty($top) ) {
-			$query = new WP_Query( array( 'post_type' => array('post', 'page', 'product', 'wprm_recipe', 'glossary'), 'post_status' => 'publish', 's' => $msg, 'posts_per_page' => 3 ) );
+			$query = new WP_Query( array( 'post_type' => array('post', 'page', 'product', 'wprm_recipe', 'course', 'sfwd-courses', 'tribe_events'), 'post_status' => 'publish', 's' => $msg, 'posts_per_page' => 3 ) );
 			if ( $query->have_posts() ) {
 				foreach ( $query->posts as $p ) {
-					$clean_content = mb_substr( wp_strip_all_tags( strip_shortcodes( $p->post_content ) ), 0, 500 );
-					$top[] = array('name' => $p->post_title, 'info' => $clean_content, 'link' => get_permalink($p->ID));
+					$top[] = array('name' => $p->post_title, 'info' => mb_substr(wp_strip_all_tags($p->post_content), 0, 300), 'link' => get_permalink($p->ID));
 				}
 			}
 			wp_reset_postdata();
@@ -297,11 +322,13 @@ class Chatbot_AI_Engine {
 			$top = array_column($top, 'data');
 		}
 
-		if ( empty($top) ) return "\n\n### NO DATA FOUND. Guide the user to " . get_site_url() . "/рецепти/.";
+		if ( empty($top) ) return "";
 
-		$ctx = "\n\n### DATASET (FACTS FROM SITE):\n" . wp_json_encode($top, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-		$ctx .= "\nSTRICT RULES: 1. Use ONLY names and links from DATASET. 2. NEVER invent links. 3. Answer in natural Bulgarian.";
-		return $ctx;
+		return wp_json_encode($top, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+	}
+
+	public function render_shortcode() {
+		return '<div id="chatbot-ai-engine-embedded"></div>';
 	}
 
 	public function handle_sync_knowledge() {
@@ -311,48 +338,94 @@ class Chatbot_AI_Engine {
 		wp_send_json_success( array('message' => "Successfully indexed $res items.") );
 	}
 
+	private function generate_item_tags( $id, $type ) {
+		$tags = array();
+		switch ( $type ) {
+			case 'product':
+				$tags[] = 'продукт цена купи поръчай абонамент клуб членство';
+				break;
+			case 'wprm_recipe':
+				$tags[] = 'рецепта готвене съставки приготвяне ястие';
+				break;
+			case 'glossary':
+				$tags[] = 'термин речник дефиниция обяснение';
+				break;
+			case 'tribe_events':
+				$tags[] = 'събитие дата място програма';
+				break;
+			case 'sfwd-courses':
+			case 'course':
+				$tags[] = 'курс обучение академия урок лекция';
+				break;
+			case 'sfwd-lessons':
+			case 'sfwd-topic':
+				$tags[] = 'урок лекция обучение курс тема';
+				break;
+			default:
+				$tags[] = 'статия публикация';
+		}
+		$wp_tags = get_the_tags( $id );
+		if ( $wp_tags ) foreach ( $wp_tags as $t ) $tags[] = mb_strtolower( $t->name );
+		$wp_cats = get_the_category( $id );
+		if ( $wp_cats ) foreach ( $wp_cats as $c ) $tags[] = mb_strtolower( $c->name );
+		return implode( ' ', array_unique( $tags ) );
+	}
+
 	private function sync_site_knowledge() {
 		@set_time_limit( 600 ); if ( function_exists( 'wp_raise_memory_limit' ) ) wp_raise_memory_limit( 'admin' );
-		$post_types = array( 'post', 'page', 'product', 'wprm_recipe', 'glossary', 'tribe_events' );
+		
+		$post_types = array( 'post', 'page', 'product', 'wprm_recipe', 'glossary', 'tribe_events', 'course', 'sfwd-courses', 'sfwd-lessons', 'sfwd-topic' );
 		$data = array(); 
 
 		foreach ( $post_types as $type ) {
-			$query = new WP_Query( array( 'post_type' => $type, 'post_status' => 'publish', 'posts_per_page' => -1, 'fields' => 'ids' ) );
+			if ( ! post_type_exists( $type ) ) continue;
+
+			$query = new WP_Query( array( 
+				'post_type' => $type, 
+				'post_status' => 'publish', 
+				'posts_per_page' => -1, 
+				'fields' => 'ids',
+				'no_found_rows' => true
+			) );
+
+			if ( empty($query->posts) ) continue;
+
 			foreach ( $query->posts as $id ) {
 				$p = get_post($id); if (!$p) continue;
 				$text = "";
-				if ('wprm_recipe' === $type) {
+				
+				if ( 'product' === $type ) {
+					$price = get_post_meta($id, '_price', true);
+					$sale_price = get_post_meta($id, '_sale_price', true);
+					$final_price = !empty($sale_price) ? $sale_price : $price;
+					$product_desc = !empty($p->post_content) ? $p->post_content : $p->post_excerpt;
+					$text = "ЦЕНА: " . ($final_price ? $final_price . " EUR" : "Виж сайта") . " | " . $product_desc;
+				} elseif ('wprm_recipe' === $type) {
 					$ing = get_post_meta($id, 'wprm_ingredients', true);
-					$text = "Ingredients: ";
-					if (is_array($ing)) foreach($ing as $g) if(!empty($g['ingredients'])) foreach($g['ingredients'] as $i) $text .= ($i['name']??'').", ";
-					$text .= " | Summary: " . get_post_meta($id, 'wprm_summary', true) . " | Method: " . $p->post_content;
-				} elseif ('tribe_events' === $type) {
-					$cost = get_post_meta($id, '_EventCost', true);
-					if ( empty($cost) ) {
-						$t_query = new WP_Query(array('post_type' => 'product', 'meta_key' => '_tribe_wooticket_for_event', 'meta_value' => $id, 'posts_per_page' => 1));
-						if ( $t_query->have_posts() ) $cost = get_post_meta($t_query->posts[0], '_price', true);
-						wp_reset_postdata();
+					if (is_array($ing)) {
+						$text = "Съставки: ";
+						foreach($ing as $g) if(!empty($g['ingredients'])) foreach($g['ingredients'] as $i) $text .= ($i['name']??'').", ";
+						$text .= " | ";
 					}
-					if ( empty($cost) ) $cost = get_post_meta($id, '_ticket_price', true);
-					$text = "DATE: ".get_post_meta($id, '_EventStartDate', true)." | PRICE: ".($cost ? $cost . " EUR" : "Check Academy")." | INFO: ".$p->post_content;
-				} elseif ('product' === $type && function_exists('wc_get_product')) {
-					$product = wc_get_product($id);
-					$price = $product ? $product->get_price() . ' EUR' : '';
-					$text = "ЦЕНА: {$price} | " . $p->post_content;
-				} elseif ('glossary' === $type) {
-					$text = "DEFINITION: " . $p->post_content;
+					$text .= get_post_meta($id, 'wprm_summary', true) . " | " . $p->post_content;
+				} elseif ('tribe_events' === $type) {
+					$start_date = get_post_meta($id, '_EventStartDate', true);
+					$text = "Дата: $start_date | " . $p->post_content;
 				} else {
 					$text = $p->post_content;
 				}
-				$clean = wp_strip_all_tags(strip_shortcodes($text));
-				$data[] = array('id' => $id, 'title' => get_the_title($id), 'type' => $type, 'content' => mb_substr(preg_replace('/\s+/', ' ', $clean), 0, 500), 'url' => get_permalink($id), 'tags' => ($type === 'product' ? 'курс обучение лекция закупи купи цена' : ''));
-			}
-		}
 
-		foreach ( array('product_cat', 'category', 'wprm_course') as $tax ) {
-			if ( taxonomy_exists($tax) ) {
-				$terms = get_terms( array( 'taxonomy' => $tax, 'hide_empty' => true ) );
-				if ( ! is_wp_error($terms) ) foreach ( $terms as $t ) $data[] = array('id' => 't_'.$t->term_id, 'title' => $t->name, 'type' => 'category', 'content' => "Browse items in $t->name", 'url' => get_term_link($t), 'tags' => '');
+				$clean = wp_strip_all_tags(strip_shortcodes($text));
+				$clean = preg_replace('/\s+/', ' ', $clean);
+
+				$data[] = array(
+					'id' => $id, 
+					'title' => get_the_title($id), 
+					'type' => $type, 
+					'content' => mb_substr($clean, 0, 800), 
+					'url' => get_permalink($id), 
+					'tags' => $this->generate_item_tags($id, $type)
+				);
 			}
 		}
 
@@ -366,15 +439,18 @@ class Chatbot_AI_Engine {
 		$messages = array( array('role' => 'system', 'content' => $prompt) );
 		if ( ! empty($history) && is_array($history) ) foreach ( $history as $h ) $messages[] = array('role' => $h['role'], 'content' => $h['content']);
 		$messages[] = array('role' => 'user', 'content' => $msg);
-		$body = array( 'model' => $settings['model'], 'temperature' => floatval($settings['temperature']), 'messages' => $messages );
+		$body = array( 'model' => $settings['model'], 'temperature' => floatval($settings['temperature']), 'messages' => $messages, 'max_tokens' => 1000 );
 		$response = wp_remote_post( $settings['api_url'], array( 'headers' => array( 'Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json' ), 'body' => wp_json_encode($body), 'timeout' => 30 ) );
 		if ( is_wp_error($response) ) return $response;
 		$data = json_decode( wp_remote_retrieve_body($response), true );
 		$raw = $data['choices'][0]['message']['content'] ?? '';
-		if ( empty($raw) ) return '';
+		if ( empty($raw) ) return 'Извинете, възникна грешка.';
+		
+		$raw = preg_replace("/\n{3,}/", "\n\n", $raw);
 		$text = preg_replace('/\[([^\]]+)\]\(([^\)]+)\)/', '<a href="$2" target="_blank">$1</a>', $raw);
 		$text = preg_replace('/(?<!href=")(https?:\/\/[^\s<]+)/', '<a href="$1" target="_blank">$1</a>', $text);
-		return nl2br( wp_kses($text, array('strong' => array(), 'br' => array(), 'p' => array(), 'ul' => array(), 'li' => array(), 'a' => array('href' => array(), 'target' => array(), 'title' => array()))) );
+		
+		return wp_kses($text, array('strong' => array(), 'br' => array(), 'p' => array(), 'ul' => array(), 'li' => array(), 'a' => array('href' => array(), 'target' => array(), 'title' => array())));
 	}
 
 	private function encrypt_api_key($k) { $m = 'aes-256-cbc'; $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length($m)); return base64_encode($iv . openssl_encrypt($k, $m, $this->get_encryption_key(), 0, $iv)); }

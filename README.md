@@ -210,6 +210,6 @@ Licensed under the GNU General Public License v2.0 or later
 
 ---
 
-**Версия:** 1.0.0
-**Последна актуализация:** 14 март 2024
+**Версия:** 1.2.0
+**Последна актуализация:** 15 март 2026
 **Автор:** Chatbot AI Engine Team
