@@ -420,10 +420,10 @@ class Chatbot_AI_Engine {
 
 				$data[] = array(
 					'id' => $id, 
-					'title' => get_the_title($id), 
+					'title' => html_entity_decode( get_the_title($id), ENT_QUOTES | ENT_HTML5, 'UTF-8' ),
 					'type' => $type, 
 					'content' => mb_substr($clean, 0, 800), 
-					'url' => get_permalink($id), 
+					'url' => urldecode( get_permalink($id) ), 
 					'tags' => $this->generate_item_tags($id, $type)
 				);
 			}

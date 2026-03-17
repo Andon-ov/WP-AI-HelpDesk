@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python3 -c \"\nimport json\nd = json\\.load\\(open\\('/home/baido/Downloads/chatbot-ai-knowledge \\(1\\)\\.json'\\)\\)\n\nposts = \\[item for item in d if item\\['type'\\] == 'post'\\]\nrecipes = \\[item for item in d if item\\['type'\\] == 'wprm_recipe'\\]\n\n# How many posts are actually recipes vs articles\\?\nprint\\('Posts with tag \\\\\"рецепти\\\\\":', sum\\(1 for p in posts if 'рецепти' in p\\.get\\('tags',''\\)\\)\\)\nprint\\('Total posts:', len\\(posts\\)\\)\nprint\\('Total wprm_recipe:', len\\(recipes\\)\\)\nprint\\(\\)\n\n# Show some non-recipe posts\nnon_recipe_posts = \\[p for p in posts if 'рецепти' not in p\\.get\\('tags',''\\)\\]\nprint\\(f'Posts WITHOUT рецепти tag: \\{len\\(non_recipe_posts\\)\\}'\\)\nfor p in non_recipe_posts\\[:5\\]:\n    print\\(f'  \\{p\\[\\\\\"title\\\\\"\\]\\} \\| tags: \\{p\\[\\\\\"tags\\\\\"\\]\\}'\\)\nprint\\(\\)\n\n# Show a few posts tagged with рецепти that look like actual articles\narticle_like = \\[p for p in posts if 'рецепти' in p\\.get\\('tags',''\\) and len\\(p\\['content'\\]\\) > 200\\]\nprint\\(f'Posts tagged рецепти \\(look like articles\\): \\{len\\(article_like\\)\\}'\\)\nfor p in article_like\\[:3\\]:\n    print\\(f'  Title: \\{p\\[\\\\\"title\\\\\"\\]\\}'\\)\n    print\\(f'  Content starts: \\{p\\[\\\\\"content\\\\\"\\]\\[:150\\]\\}'\\)\n\"\n$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
