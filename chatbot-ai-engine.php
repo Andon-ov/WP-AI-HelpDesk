@@ -286,7 +286,7 @@ class Chatbot_AI_Engine {
 		$normalized = array();
 		foreach ( $raw_keywords as $kw ) {
 			$normalized[] = $kw;
-			$stem = preg_replace('/(ата|ето|ите|та|те|ия|то|а|е|и|я)$/u', '', $kw);
+			$stem = preg_replace('/(ата|ето|ите|та|те|ия|ий|овете|ове|то|а|е|и|я|й)$/u', '', $kw);
 			if ( mb_strlen($stem) > 3 ) $normalized[] = $stem;
 		}
 		$keywords = array_unique($normalized);
